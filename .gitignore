@@ -1,0 +1,14 @@
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Safety net — frontend/.gitignore and backend/.gitignore already cover
+# their own stacks in detail; these catch anything run from the repo root.
+node_modules/
+__pycache__/
+.env
+.env.local
+.env.*.local
