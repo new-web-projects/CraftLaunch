@@ -1,0 +1,5 @@
+-r base.txt
+
+# Nothing dev-only yet. Reserved for tools like django-debug-toolbar
+# or factory_boy once there are models/views worth debugging or
+# generating fixtures for.

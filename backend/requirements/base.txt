@@ -1,0 +1,14 @@
+# Core framework
+django==6.0.7
+djangorestframework==3.17.1
+
+# Environment-variable-driven settings (.env parsing, DATABASE_URL parsing)
+django-environ==0.14.0
+
+# Frontend (localhost:3000 in dev, the real domain in prod) is a
+# separate origin from the API, so CORS has to be explicit.
+django-cors-headers==4.9.0
+
+# PostgreSQL driver (Neon). [binary] avoids needing libpq-dev on every
+# machine that installs these requirements.
+psycopg[binary]==3.3.4
