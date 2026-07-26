@@ -1,0 +1,52 @@
+# Production-shaped compose file. A reasonable starting point for a
+# single VM, and a reference for translating to a managed orchestrator
+# (ECS, Cloud Run, k8s, ...) later. No `db` service — Neon is managed
+# Postgres, reached over DATABASE_URL like everywhere else.
+#
+# Usage:
+#   cp frontend/.env.example frontend/.env.production
+#   cp backend/.env.example backend/.env
+#   # fill in real values — see each .env.example for what's required
+#   docker compose -f deployment/docker-compose.prod.yml up -d --build
+
+services:
+  frontend:
+    build:
+      context: ..
+      dockerfile: deployment/docker/frontend.Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL}
+    restart: unless-stopped
+    expose:
+      - "3000"
+    env_file:
+      - ../frontend/.env.production
+
+  backend:
+    build:
+      context: ..
+      dockerfile: deployment/docker/backend.Dockerfile
+    restart: unless-stopped
+    expose:
+      - "8000"
+    env_file:
+      - ../backend/.env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput &&
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3"
+
+  nginx:
+    image: nginx:stable-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - frontend
+      - backend

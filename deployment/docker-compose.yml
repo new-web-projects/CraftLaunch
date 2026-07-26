@@ -1,0 +1,48 @@
+# Local development with hot reload. Builds the *.dev.Dockerfile images
+# (not the production ones in this same folder) and bind-mounts source
+# code over them.
+#
+# There's deliberately no `db` service here: the spec commits to Neon
+# (managed Postgres) as the one database, in dev and prod alike, so
+# dev points DATABASE_URL at a Neon branch instead of diverging onto a
+# different engine (e.g. a local Postgres container). Neon's branching
+# feature is a good fit — branch a "dev" copy off the main database
+# rather than starting from an empty local instance.
+#
+# Usage:
+#   cp frontend/.env.example frontend/.env.local
+#   cp backend/.env.example backend/.env
+#   # fill in DATABASE_URL and DJANGO_SECRET_KEY in backend/.env
+#   docker compose -f deployment/docker-compose.yml up --build
+
+services:
+  frontend:
+    build:
+      context: ..
+      dockerfile: deployment/docker/frontend.dev.Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../frontend:/app
+      - /app/node_modules
+      - /app/.next
+    env_file:
+      - ../frontend/.env.local
+    depends_on:
+      - backend
+
+  backend:
+    build:
+      context: ..
+      dockerfile: deployment/docker/backend.dev.Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../backend:/app
+    env_file:
+      - ../backend/.env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.development
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py runserver 0.0.0.0:8000"
