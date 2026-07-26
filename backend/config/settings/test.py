@@ -1,1 +1,32 @@
+"""
+Settings for running the automated test suite (and CI).
 
+Not one of the environments the spec asked for by name, but included
+so "Build Verification" is a real, repeatable command rather than a
+one-off manual check: fast, hermetic, and independent of whatever
+Neon credentials happen to be in the developer's .env.
+
+Run with: DJANGO_SETTINGS_MODULE=config.settings.test
+"""
+
+from .base import *  # noqa: F401,F403
+from .base import env
+
+SECRET_KEY = "django-insecure-test-only-6f2b8f"
+DEBUG = False
+ALLOWED_HOSTS = ["testserver", "localhost", "127.0.0.1"]
+
+# In-memory SQLite: fast, zero setup, no Neon credentials required.
+# CI additionally runs the suite against a real Postgres service
+# container (see deployment/../.github/workflows/ci.yml) before merge,
+# so engine-specific behavior still gets caught before it ships.
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": ":memory:",
+    }
+}
+
+CORS_ALLOWED_ORIGINS = ["http://localhost:3000"]
+
+PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
