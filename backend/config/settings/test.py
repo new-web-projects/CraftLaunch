@@ -30,3 +30,28 @@ DATABASES = {
 CORS_ALLOWED_ORIGINS = ["http://localhost:3000"]
 
 PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
+
+SIMPLE_JWT["SIGNING_KEY"] = SECRET_KEY
+
+AUTH_COOKIE_SECURE = False
+
+# Captures sent mail in django.core.mail.outbox for assertions instead
+# of printing or actually sending anything.
+EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+
+CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+
+# Throttling is real infrastructure worth testing, but LocMemCache
+# persists for the whole test run — without this override, unrelated
+# tests further down the suite start failing with 429s once earlier
+# tests have used up the "5/min" login budget. A None rate is
+# SimpleRateThrottle's own documented way to disable a scope entirely
+# (view-level `throttle_classes` like LoginView's override
+# DEFAULT_THROTTLE_CLASSES, so clearing that alone isn't enough — the
+# rate itself has to go). See tests/test_throttling.py for a dedicated
+# test that overrides these back on and clears the cache explicitly.
+REST_FRAMEWORK = {
+    **REST_FRAMEWORK,
+    "DEFAULT_THROTTLE_CLASSES": [],
+    "DEFAULT_THROTTLE_RATES": {"anon": None, "user": None, "login": None, "password_reset": None},
+}

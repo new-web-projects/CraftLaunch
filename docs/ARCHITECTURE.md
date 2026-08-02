@@ -96,22 +96,121 @@ the production images nginx sits in front of;
 used only by `docker-compose.yml` for local hot-reload and are never
 deployed.
 
-## Known items carried forward on purpose
+## Known items carried forward on purpose (Part 1)
 
-- **DRF permissions are wide open (`AllowAny`) globally.** There's no
-  auth backend to restrict access to yet — Part 1 explicitly excludes
-  authentication. Every view added before the Authentication part
-  ships should be treated as public, and `REST_FRAMEWORK` in `base.py`
-  is commented accordingly. This is the main thing to revisit first
-  when that part starts.
-- **A moderate npm audit advisory (PostCSS XSS, GHSA-qx2v-qp2m-jg93)
-  ships transitively inside `next`'s own dependency tree.** `npm audit
-  fix --force` "resolves" it by downgrading Next.js to a four-year-old
-  release, which is not a real fix. Tracked as a dependency to watch
-  for a Next.js patch release, not something to force-fix now.
+- ~~**DRF permissions are wide open (`AllowAny`) globally.**~~
+  **Resolved in Part 2:** `DEFAULT_PERMISSION_CLASSES` is now
+  `IsAuthenticated`; individual views opt into `AllowAny` explicitly
+  (register, login, refresh, forgot/reset-password, verify-email).
+- ~~**A moderate npm audit advisory (PostCSS XSS) ships transitively
+  inside `next`'s own dependency tree.**~~ **Resolved in Part 2** by
+  upgrading to Next.js 16.2.11 — see the Part 2 npm audit notes below
+  for what that upgrade actually fixed vs. what's still open.
 - **shadcn/ui's CLI (`npx shadcn add ...`) was not run against the live
   registry during development** — the sandbox this was built in
   couldn't reach `ui.shadcn.com`. `components.json`, `src/lib/utils.ts`
   and the CSS theme tokens in `globals.css` were hand-authored to match
   what the CLI would generate, so `npx shadcn add button` (etc.) should
-  work normally on a machine with normal internet access.
+  work normally on a machine with normal internet access. Still true
+  in Part 2 — all of this part's UI primitives (Input, Label, Card,
+  Alert, Separator) were hand-authored the same way.
+
+---
+
+# Part 2: Authentication & Authorization
+
+## JWT + cookie design
+
+- **Access token:** returned in the login/refresh response body, kept
+  in memory only (`frontend/src/lib/api-client.ts`) — never
+  localStorage/sessionStorage. Lost on a full page reload by design.
+- **Refresh token:** set as an httpOnly, Secure (in prod), SameSite=Lax
+  cookie, scoped to `/api/auth/`. Never appears in any JSON response.
+  Rotated on every use (`ROTATE_REFRESH_TOKENS` + `BLACKLIST_AFTER_ROTATION`).
+- **Session-hint cookie:** a third, non-httpOnly cookie holding just
+  `"1"` — nothing sensitive. Lets `src/proxy.ts` (Next.js 16's
+  replacement for `middleware.ts`) and `AuthProvider` make a fast,
+  non-authoritative "is it worth trying a silent refresh" decision
+  without ever touching the real token. The proxy's redirect is
+  explicitly documented as a UX shortcut, not a security boundary —
+  the Django API enforces the real authorization on every request
+  regardless of what the proxy decides.
+- **"Remember me"** is enforced twice: a longer JWT lifetime
+  (`JWT_REMEMBER_ME_LIFETIME_DAYS`) and, independently, the cookies
+  themselves get a real `max-age` only when remembering — otherwise
+  they're browser session cookies with no `max-age` at all, so they
+  disappear when the browser closes even before the (shorter) token
+  expiry would have kicked in.
+- **Why access tokens stay short-lived:** blacklisting a refresh token
+  (logout, logout-all, revoke-session) does *not* retroactively
+  invalidate an access token already issued from it — that's inherent
+  to how JWTs work, not a bug. `ACCESS_TOKEN_LIFETIME` defaults to 15
+  minutes specifically to bound that window.
+
+## Role isolation
+
+Three roles (`ADMIN` / `DEVELOPER` / `CUSTOMER`) share one `User`
+table (role field) but get three *separate* profile tables
+(`CustomerProfile` / `DeveloperProfile` / `AdminProfile`, from a shared
+abstract `BaseProfile`) rather than one shared table with a role
+column — see the models.py docstring. `apps/accounts/permissions.py`
+adds `IsCustomer` / `IsDeveloper` / `IsAdminRole` / `IsSuperAdmin` for
+future role-gated endpoints; `IsSuperAdmin` checks Django's own
+`is_superuser`, not the `role` field, since only a true Super Admin
+(bootstrapped via `createsuperuser`) can create further Admins.
+
+## Redis is now required infrastructure
+
+Rate limiting (login throttle, password-reset throttle) and account
+lockout both depend on a cache shared across all of gunicorn's worker
+processes — `LocMemCache` is per-process, which would silently make a
+"5/min" limit actually allow 5×workers/min in production. Both
+compose files and CI now include Redis; the same Neon reasoning above
+applies here too (see `docker-compose.prod.yml`'s comment: production
+should point `REDIS_URL` at a managed Redis, not a bare container).
+
+## Bugs caught by actually running this
+
+- A missing `apps/accounts/__init__.py` silently turned the app into a
+  namespace package, which broke `manage.py test`'s dotted test-label
+  discovery with a confusing `NoneType` error.
+- Token rotation was blacklisting the *old* refresh token after
+  mutating its own jti into the new token's jti — since `blacklist()`
+  reads whatever jti is currently on the object, this would have
+  blacklisted the new token's jti instead of the old one, leaving the
+  original refresh token silently still valid. Fixed by blacklisting
+  before mutating (see `accounts/views.py` `RefreshView`).
+- `remember_me` was computed at login but never stored as a token
+  claim, so it silently reset to `False` on the very first refresh.
+  Fixed in `accounts/jwt.py`.
+- DRF's `SimpleRateThrottle.THROTTLE_RATES` is snapshotted onto the
+  throttle class at import time — `override_settings` on
+  `REST_FRAMEWORK` does *not* retroactively change it for an
+  already-imported throttle class, even though Django's
+  `setting_changed` signal makes it look like it should. The dedicated
+  throttle test (`tests/test_throttling.py`) patches the class's rate
+  dict directly instead.
+
+## npm audit: two real fixes, one accepted/tracked issue
+
+- Adding new dependencies surfaced 3 *genuine* high-severity CVEs in
+  Next.js itself (not the false-positive-downgrade pattern from Part
+  1) — fixed by upgrading to the just-released 16.2.11 patch.
+- That still left `sharp` (Next's optional image-optimization
+  dependency) on a vulnerable version, because Next.js's own declared
+  range doesn't reach the patched release yet. Fixed with a
+  `package.json` "overrides" entry forcing the patched version
+  directly, verified the build still succeeds with it.
+- **Still open, accepted:** `eslint-config-next`'s bundled
+  `eslint-plugin-react`/`eslint-plugin-import`/`eslint-plugin-jsx-a11y`
+  depend on a vulnerable `minimatch`/`brace-expansion` (DoS via
+  unbounded glob expansion). This is a dev-tooling-only dependency —
+  it never ships to the browser or the production server — so the
+  real-world exposure is low. Bumping `eslint` to 10.x satisfies the
+  declared peer range but was tested and found to genuinely crash
+  `eslint-plugin-react` at runtime (`getFilename is not a function`),
+  so it was reverted rather than shipped broken. Tracked for whenever
+  `eslint-config-next` updates its own bundled plugin versions, not
+  force-fixed now — same judgment call as the postcss issue in Part 1,
+  for the same reason: a real, tested incompatibility beats a cleaner
+  audit report.

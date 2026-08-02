@@ -12,3 +12,15 @@ django-cors-headers==4.9.0
 # PostgreSQL driver (Neon). [binary] avoids needing libpq-dev on every
 # machine that installs these requirements.
 psycopg[binary]==3.3.4
+
+# JWT auth (access/refresh tokens, rotation, blacklist-on-logout).
+djangorestframework-simplejwt==5.5.1
+
+# Argon2 password hashing (settings/base.py PASSWORD_HASHERS) — Django's
+# own recommended algorithm when this dependency is available.
+argon2-cffi==25.1.0
+
+# Shared cache/rate-limit counter across gunicorn's worker processes
+# (see settings/production.py) — Django's built-in RedisCache backend
+# needs this client underneath it.
+redis==8.0.1

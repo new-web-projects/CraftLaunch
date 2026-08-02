@@ -44,11 +44,24 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       DJANGO_SECRET_KEY: ci-only-secret-key-not-for-real-use
       DATABASE_URL: postgres://craftlaunch:craftlaunch@localhost:5432/craftlaunch
       DJANGO_ALLOWED_HOSTS: localhost
       DJANGO_CORS_ALLOWED_ORIGINS: http://localhost:3000
+      REDIS_URL: redis://localhost:6379/0
+      EMAIL_HOST: smtp.example.com
+      EMAIL_HOST_USER: ci-placeholder
+      EMAIL_HOST_PASSWORD: ci-placeholder
     steps:
       - uses: actions/checkout@v4
 
@@ -59,6 +72,14 @@ jobs:
           cache-dependency-path: backend/requirements/development.txt
 
       - run: pip install -r requirements/development.txt
+
+      # Real migration against real Postgres — the sqlite test settings
+      # (below) prove the app logic works; this proves the migrations
+      # themselves are valid against the actual production database engine.
+      - name: Apply migrations against Postgres
+        run: python manage.py migrate --noinput
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.production
 
       # Checked against production settings + a real Postgres service
       # (not the sqlite test settings) so config drift between

@@ -31,6 +31,29 @@ DATABASES["default"]["DISABLE_SERVER_SIDE_CURSORS"] = env.bool(
 
 CORS_ALLOWED_ORIGINS = env.list("DJANGO_CORS_ALLOWED_ORIGINS")
 
+SIMPLE_JWT["SIGNING_KEY"] = SIMPLE_JWT["SIGNING_KEY"] or SECRET_KEY
+
+AUTH_COOKIE_SECURE = True
+
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST = env("EMAIL_HOST")
+EMAIL_PORT = env.int("EMAIL_PORT", default=587)
+EMAIL_HOST_USER = env("EMAIL_HOST_USER")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD")
+EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
+
+# Required, not optional: with gunicorn running multiple worker
+# processes (see deployment/docker/backend.Dockerfile, --workers 3),
+# LocMemCache would give each worker its own throttle counter — a "5
+# requests/min" limit would actually allow 15/min. Redis is one shared
+# counter across all workers.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": env("REDIS_URL"),
+    }
+}
+
 # ---------------------------------------------------------------------------
 # Static files — WhiteNoise serves compressed, hashed assets directly from
 # the app process so production doesn't need a separate static file host.

@@ -7,8 +7,11 @@
  * shared/constants/roles.py in sync by hand until a codegen step
  * replaces that convention.
  *
- * Not consumed by any code yet: the frontend has no auth UI and the
- * backend has no User model until a later part.
+ * ROLES is live as of Part 2: frontend/src/types/auth.ts's `Role` type
+ * and backend/apps/accounts/models.py's `Role.TextChoices` both mirror
+ * these exact values by hand (see this file's history for the sync
+ * convention this predicts). STORAGE_PROVIDERS is still unconsumed —
+ * that's a later part.
  */
 
 export const ROLES = {

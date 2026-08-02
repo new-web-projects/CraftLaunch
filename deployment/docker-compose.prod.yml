@@ -1,7 +1,11 @@
 # Production-shaped compose file. A reasonable starting point for a
 # single VM, and a reference for translating to a managed orchestrator
 # (ECS, Cloud Run, k8s, ...) later. No `db` service — Neon is managed
-# Postgres, reached over DATABASE_URL like everywhere else.
+# Postgres, reached over DATABASE_URL like everywhere else. Same logic
+# for Redis: REDIS_URL (backend/.env) should point at a managed Redis
+# (Upstash, Redis Cloud, ElastiCache, ...) rather than a bare container
+# here — an unmanaged single container has no persistence or failover,
+# which defeats the point for something rate-limiting depends on.
 #
 # Usage:
 #   cp frontend/.env.example frontend/.env.production
