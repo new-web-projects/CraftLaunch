@@ -214,3 +214,119 @@ should point `REDIS_URL` at a managed Redis, not a bare container).
   force-fixed now — same judgment call as the postcss issue in Part 1,
   for the same reason: a real, tested incompatibility beats a cleaner
   audit report.
+
+---
+
+# Part 3: Core Database Architecture & Booking Foundation
+
+## Three apps, one dependency direction
+
+`apps/core` (shared abstract mixins, no models of its own) →
+`apps/catalog` (what's for sale) → `apps/bookings` (orders against the
+catalog). Bookings imports catalog; catalog never imports bookings.
+Clean Architecture's dependency rule in practice: the thing being sold
+doesn't know orders exist.
+
+## Three category axes, on purpose
+
+`ServiceCategory` (what kind of *work* — New Website, Redesign, Bug
+Fix, Maintenance), `WebsiteCategory` (what *industry* the result is
+for — E-commerce, Portfolio, Blog), and `WebsiteType` (what
+*structure* — Landing Page, Web App) are three independent models
+rather than one merged "category" concept, because a Package belongs
+to exactly one ServiceCategory (pricing tiers differ by kind of work)
+while a Booking picks a WebsiteCategory and WebsiteType independently
+of which service was purchased.
+
+## ProjectStatus is a table, not an enum
+
+`Booking.status` is a ForeignKey to `ProjectStatus`, not a
+`TextChoices` field — matching Part 1's "everything admin-editable"
+goal. Adding or reordering a workflow status later is a data change
+(edit a row), not a code change. Seeded via
+`bookings/migrations/0002_seed_project_status.py` with the exact 9
+statuses the spec lists, a single admin-configurable default, and a
+DB-level constraint (`unique_default_status`) ensuring exactly one row
+can be the default at a time.
+
+## UUID vs. integer primary keys
+
+UUIDs where a row is private and gets referenced directly in a URL
+(`Booking`, `ProjectAttachment`) — non-guessable, no enumeration risk.
+Plain integers on the public catalog side (`Package` and every lookup
+table) — anyone can already browse the full package list, so an
+incrementing id leaks nothing an attacker couldn't already see, and
+it's simpler in the Django admin. "Leaf" sub-entities that are always
+accessed via their parent booking rather than directly by URL
+(`CustomerRequirement`, `BookingNote`, `BookingTimeline`,
+`DeveloperAssignment`) also stay integer PKs for the same reason.
+
+## Soft delete and the "repository" question
+
+`SoftDeleteModel` (apps/core/models.py) gives every model that needs
+it an `objects` manager that transparently excludes deleted rows and
+an `all_objects` manager that doesn't, for admin/reporting use. This
+project uses Django's own Manager/QuerySet as the repository/data-
+access layer (`PackageManager.published()`, `BookingManager.for_user()`)
+rather than a separate parallel repository class per model — the ORM
+already *is* that abstraction; a second layer wrapping
+`Package.objects.filter(...)` calls would mostly just rename methods.
+Services (`BookingService`, `PackageService`, `AttachmentService`) sit
+above the managers and own the actual business logic — booking
+creation, status transitions, publish/hide, file upload — so the same
+rules apply whether they're triggered from the API, a future admin
+action, or a management command.
+
+## Storage abstraction
+
+`apps/bookings/storage.py` defines a `StorageBackend` protocol with
+three implementations (`LocalStorageBackend`, `S3StorageBackend`,
+`CloudinaryStorageBackend`) and `get_storage_backend()`, which reads
+`STORAGE_PROVIDER` and returns the matching one. Every attachment
+records which provider it was actually saved under
+(`ProjectAttachment.storage_provider`), so a file uploaded before an
+admin switches providers still resolves correctly afterward. Neither
+`services.py` nor `views.py` imports `boto3` or `cloudinary` directly —
+only `storage.py` does, which is the entire point of the abstraction.
+
+## Bugs caught by actually running this
+
+- `PackageWriteSerializer` had no validation for the tier+category
+  uniqueness constraint — a duplicate would have hit the database
+  directly and raised an unhandled 500 instead of a clean 400. Added
+  explicit `validate()` logic mirroring the DB constraint.
+- A `PrimaryKeyRelatedField(queryset=None)` placeholder (meant to be
+  filled in lazily to sidestep an imagined circular import between
+  catalog and bookings) failed DRF's own assertion at class-definition
+  time — the circular import risk didn't actually exist; bookings
+  already imports catalog models directly elsewhere in the same file.
+- The significant one: `BookingDetailView` and four other views looked
+  up bookings via an unscoped queryset, so a request for someone
+  else's private booking would find the row and only get blocked at
+  the permission check (403). Added `BookingQuerySet.for_user()` (role-
+  dispatching: admin sees everything, developer sees assigned
+  bookings, customer sees their own) and used it everywhere a booking
+  is looked up by ID, so an unrelated user's request now 404s instead
+  — consistent with how an unpublished Package already 404s for
+  anonymous visitors, and correct for the same reason: don't confirm a
+  private resource's existence to someone with no relationship to it.
+- Reusing Part 2's `UserSerializer` (which does a `get_or_create`
+  database hit to fetch a profile) nested inside every attachment
+  uploader / note author / timeline actor / developer assignment would
+  have been a real N+1 problem against the explicit "Optimized
+  Queries" requirement — a booking with 20 timeline events would be 20
+  extra profile lookups just to render who did what. Added a
+  lightweight `PublicUserSummarySerializer` (id/username/full_name/role,
+  no profile fetch) to `apps/accounts/serializers.py` instead —
+  additive only, doesn't touch anything Part 2 built.
+
+## Design choice: "Booking Status" lives inside Booking Details
+
+The spec lists "Booking Status" as its own page alongside "Booking
+Details." Implemented as a prominent Timeline section embedded in the
+booking detail page rather than a separate route — the same pattern
+virtually every real order-tracking UI uses (a shipment tracker or
+milestone view is a section of the order page, not a destination you
+navigate to separately). A dedicated `GET .../timeline/` API endpoint
+still exists independently (paginated, for a booking with a long
+history), it's just consumed inline rather than routed to its own URL.

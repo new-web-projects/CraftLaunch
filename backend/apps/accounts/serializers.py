@@ -81,6 +81,24 @@ class UserSerializer(serializers.ModelSerializer):
         return profile_serializer_for(user.role)(profile).data
 
 
+class PublicUserSummarySerializer(serializers.ModelSerializer):
+    """
+    Minimal, no-extra-query representation for nesting a user inside
+    someone else's response (booking attachment uploader, note author,
+    timeline actor, developer assignment, ...). Deliberately does not
+    fetch/create a profile the way UserSerializer does — a booking
+    with 20 timeline events would otherwise be 20 extra profile
+    lookups just to render who did what.
+    """
+
+    full_name = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = User
+        fields = ["id", "username", "full_name", "role"]
+        read_only_fields = fields
+
+
 class UpdateProfileSerializer(serializers.Serializer):
     """
     PATCH /api/auth/me/ — a thin composite over User's editable fields

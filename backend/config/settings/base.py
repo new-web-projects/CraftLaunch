@@ -43,12 +43,16 @@ THIRD_PARTY_APPS = [
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
+    "django_filters",
 ]
 
-# apps.accounts (Part 2) is the first real app; projects/payments follow
-# in later parts and get registered here the same way.
+# apps.accounts (Part 2) was the first real app; apps.core/catalog/
+# bookings (Part 3) follow the same registration pattern.
 LOCAL_APPS: list[str] = [
     "apps.accounts",
+    "apps.core",
+    "apps.catalog",
+    "apps.bookings",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -270,3 +274,38 @@ FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:3000")
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="no-reply@craftlaunch.example")
 # EMAIL_BACKEND / EMAIL_HOST_* are set per-environment: console in dev,
 # locmem in test, real SMTP in production.
+
+
+# ---------------------------------------------------------------------------
+# Storage provider (Part 3)
+# ---------------------------------------------------------------------------
+# Selects the backend apps/bookings/storage.get_storage_backend() returns.
+# LOCAL needs nothing further. Only the credentials for whichever
+# provider is actually selected need to be set — S3's and Cloudinary's
+# are read here either way since get_storage_backend() only
+# instantiates the class that matches STORAGE_PROVIDER.
+
+STORAGE_PROVIDER = env("STORAGE_PROVIDER", default="LOCAL")
+
+AWS_ACCESS_KEY_ID = env("AWS_ACCESS_KEY_ID", default=None)
+AWS_SECRET_ACCESS_KEY = env("AWS_SECRET_ACCESS_KEY", default=None)
+AWS_STORAGE_BUCKET_NAME = env("AWS_STORAGE_BUCKET_NAME", default=None)
+AWS_S3_REGION_NAME = env("AWS_S3_REGION_NAME", default=None)
+
+CLOUDINARY_CLOUD_NAME = env("CLOUDINARY_CLOUD_NAME", default=None)
+CLOUDINARY_API_KEY = env("CLOUDINARY_API_KEY", default=None)
+CLOUDINARY_API_SECRET = env("CLOUDINARY_API_SECRET", default=None)
+
+# Booking attachment validation (bookings/validators.py)
+BOOKING_ATTACHMENT_MAX_SIZE_MB = env.int("BOOKING_ATTACHMENT_MAX_SIZE_MB", default=25)
+BOOKING_ATTACHMENT_ALLOWED_EXTENSIONS = env.list(
+    "BOOKING_ATTACHMENT_ALLOWED_EXTENSIONS",
+    default=[
+        "jpg", "jpeg", "png", "gif", "webp", "svg",  # images
+        "pdf",
+        "zip",
+        "doc", "docx",
+        "xls", "xlsx", "csv",  # spreadsheets
+        "txt",
+    ],
+)

@@ -20,6 +20,16 @@ djangorestframework-simplejwt==5.5.1
 # own recommended algorithm when this dependency is available.
 argon2-cffi==25.1.0
 
+# Storage provider abstraction (apps/bookings/storage.py) — both SDKs
+# installed regardless of which STORAGE_PROVIDER is active, so an admin
+# can switch providers without a new deployment.
+django-storages==1.14.6
+cloudinary==1.45.0
+boto3==1.43.56
+
+# Filtering/ordering/search on list endpoints (catalog packages, bookings).
+django-filter==26.1
+
 # Shared cache/rate-limit counter across gunicorn's worker processes
 # (see settings/production.py) — Django's built-in RedisCache backend
 # needs this client underneath it.

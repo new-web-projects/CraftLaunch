@@ -7,10 +7,10 @@ revisions; developers accept work, manage the timeline, and deliver it;
 admins configure everything else — site branding, storage provider,
 payment settings, and theme — from a single Admin Panel.
 
-**This repository is at Part 2: Authentication & Authorization.**
-Accounts, login, email verification, password reset and profiles are
-live. Payments, bookings, and every role dashboard are intentionally
-not implemented yet — see [Pending Features](#pending-features).
+**This repository is at Part 3: Core Database Architecture & Booking
+Foundation.** Accounts, login, packages, and booking creation/tracking
+are all live. Payments and the role dashboards are intentionally not
+implemented yet — see [Pending Features](#pending-features).
 
 ## Tech stack
 
@@ -20,7 +20,7 @@ not implemented yet — see [Pending Features](#pending-features).
 | Backend   | Django 6.0, Django REST Framework                               |
 | Database  | PostgreSQL (Neon)                                               |
 | Cache     | Redis (rate limiting / throttling)                               |
-| Storage   | AWS S3 or Cloudinary, admin-switchable (later part)             |
+| Storage   | AWS S3 or Cloudinary, admin-switchable (abstraction live since Part 3) |
 | Payments  | Razorpay (later part)                                           |
 | Auth      | JWT + refresh tokens (httpOnly cookie), role-based access        |
 
@@ -30,7 +30,11 @@ not implemented yet — see [Pending Features](#pending-features).
 craftlaunch/
 ├── frontend/       Next.js app (App Router, TypeScript, Tailwind, shadcn/ui)
 ├── backend/        Django project + REST API
-│   └── apps/accounts/   Users, roles, profiles, JWT auth (Part 2)
+│   └── apps/
+│       ├── accounts/  Users, roles, profiles, JWT auth (Part 2)
+│       ├── core/      Shared abstract model mixins (Part 3)
+│       ├── catalog/   Categories, types, packages, features (Part 3)
+│       └── bookings/  Bookings, attachments, timeline (Part 3)
 ├── shared/         Cross-language constants/types kept in sync by hand
 ├── deployment/     Dockerfiles, docker-compose, nginx
 ├── docs/           Architecture notes
@@ -42,7 +46,7 @@ craftlaunch/
 
 ```bash
 ./scripts/setup.sh   # installs both stacks' dependencies
-# edit backend/.env — set DATABASE_URL (Neon) and, since Part 2, REDIS_URL
+# edit backend/.env — set DATABASE_URL (Neon) and REDIS_URL
 ./scripts/dev.sh      # runs both dev servers; Ctrl+C stops both
 ```
 
@@ -71,22 +75,24 @@ cd backend
 DJANGO_SETTINGS_MODULE=config.settings.test ./venv/bin/python manage.py test
 ```
 
-39 tests covering registration, login, logout/logout-all, refresh
-rotation, email verification, password reset, rate limiting and role
-permissions.
+99 tests: registration, login, logout/logout-all, refresh rotation,
+email verification, password reset, rate limiting, role permissions
+(Parts 1–2), plus package listing/creation, booking creation/
+validation/cancellation, attachment upload structure, and booking
+object-level permissions (Part 3).
 
 ## Documentation
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — settings structure,
-  environment variable strategy, deployment topology, the JWT/cookie
-  design, role isolation, and the roadmap for Admin-editable settings.
+  environment variables, deployment topology, JWT/cookie design, role
+  isolation, the catalog/booking data model, and the storage
+  abstraction.
 - [`shared/README.md`](shared/README.md) — why constants are
   duplicated across `frontend/` and `backend/`, and when that should
   change.
 
 ## Pending features
 
-The Settings model + Admin Panel that makes site name/logo/storage/
-payments/theme actually editable, Razorpay integration, S3/Cloudinary
-storage switching, project/booking models, and the customer/developer/
-admin dashboards themselves.
+The Settings model + Admin Panel that makes site name/logo/payments/
+theme actually editable, Razorpay integration, and the customer/
+developer/admin dashboards themselves.
