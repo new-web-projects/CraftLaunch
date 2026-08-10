@@ -14,9 +14,20 @@ field using Django's own TextChoices, matching these exact values:
         DEVELOPER = "DEVELOPER", "Developer"
         CUSTOMER = "CUSTOMER", "Customer"
 
-STORAGE_PROVIDERS is still unconsumed — that's a later part.
+STORAGE_PROVIDERS is live as of Part 3 — apps/bookings/storage.py
+dispatches on config/settings/base.py's STORAGE_PROVIDER setting
+(env-configured, defaulting to "LOCAL") using these same three values:
+
+    STORAGE_BACKENDS = {
+        "LOCAL": LocalStorageBackend,
+        "S3": S3StorageBackend,
+        "CLOUDINARY": CloudinaryStorageBackend,
+    }
+
+As with ROLES, this happens via an independently-maintained value in
+that file rather than an import of this one — see /shared/README.md.
 """
 
 ROLES = ("ADMIN", "DEVELOPER", "CUSTOMER")
 
-STORAGE_PROVIDERS = ("S3", "CLOUDINARY")
+STORAGE_PROVIDERS = ("LOCAL", "S3", "CLOUDINARY")

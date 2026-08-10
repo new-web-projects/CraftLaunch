@@ -10,8 +10,13 @@
  * ROLES is live as of Part 2: frontend/src/types/auth.ts's `Role` type
  * and backend/apps/accounts/models.py's `Role.TextChoices` both mirror
  * these exact values by hand (see this file's history for the sync
- * convention this predicts). STORAGE_PROVIDERS is still unconsumed —
- * that's a later part.
+ * convention this predicts).
+ *
+ * STORAGE_PROVIDERS is live as of Part 3: backend/apps/bookings/storage.py
+ * dispatches on these same three values via config/settings/base.py's
+ * STORAGE_PROVIDER setting (env-configured, defaulting to "LOCAL"). As
+ * with ROLES, that happens through an independently-maintained value
+ * rather than an import of this file — see /shared/README.md.
  */
 
 export const ROLES = {
@@ -23,6 +28,7 @@ export const ROLES = {
 export type Role = (typeof ROLES)[keyof typeof ROLES];
 
 export const STORAGE_PROVIDERS = {
+  LOCAL: "LOCAL",
   S3: "S3",
   CLOUDINARY: "CLOUDINARY",
 } as const;

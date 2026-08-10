@@ -118,7 +118,7 @@ class BookingTimelineView(generics.ListAPIView):
     serializer_class = BookingTimelineSerializer
 
     def get_queryset(self):
-        booking = generics.get_object_or_404(Booking.objects, pk=self.kwargs["pk"])
+        booking = generics.get_object_or_404(Booking.objects.for_user(self.request.user), pk=self.kwargs["pk"])
         self.check_object_permissions(self.request, booking)
         return booking.timeline_events.select_related("actor", "from_status", "to_status")
 

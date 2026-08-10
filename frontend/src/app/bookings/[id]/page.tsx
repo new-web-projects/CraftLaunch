@@ -47,6 +47,12 @@ function BookingDetailContent() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    if (status === "error") {
+      router.replace("/unauthorized");
+    }
+  }, [status, router]);
+
   async function handleCancel() {
     if (!booking) return;
     if (!window.confirm("Cancel this booking? This can't be undone.")) return;
@@ -63,7 +69,6 @@ function BookingDetailContent() {
   }
 
   if (status === "error") {
-    router.replace("/unauthorized");
     return null;
   }
 

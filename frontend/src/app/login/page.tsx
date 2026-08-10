@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAuth, ApiError } from "@/contexts/auth-context";
+import { getSafeRedirect } from "@/lib/utils";
 
 const loginSchema = z.object({
   identifier: z.string().min(1, "Enter your email or username"),
@@ -43,7 +44,7 @@ function LoginFormContent() {
     setUnverifiedEmail(null);
     try {
       await login(values);
-      router.push(searchParams.get("next") ?? "/profile");
+      router.push(getSafeRedirect(searchParams.get("next"), "/profile"));
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.code === "email_not_verified") {

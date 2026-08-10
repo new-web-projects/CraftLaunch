@@ -50,6 +50,9 @@ class BookingPermissionTests(APITestCase):
     def _detail_url(self):
         return reverse("bookings:detail", args=[self.booking.id])
 
+    def _timeline_url(self):
+        return reverse("bookings:timeline", args=[self.booking.id])
+
     def test_owner_can_view(self):
         self.client.force_authenticate(self.owner)
         response = self.client.get(self._detail_url())
@@ -102,3 +105,35 @@ class BookingPermissionTests(APITestCase):
         response = self.client.get(self._detail_url())
         note_contents = [n["content"] for n in response.data["notes"]]
         self.assertIn("Internal only", note_contents)
+
+    # Regression coverage for BookingTimelineView.get_queryset(): it
+    # used to look bookings up via the unscoped `Booking.objects`
+    # manager instead of `.for_user(...)`, so a non-participant's
+    # request would find the row and only get blocked at the
+    # object-permission check — a 403 that confirms the booking
+    # exists, instead of the 404 every other by-ID lookup on this
+    # resource gives. Mirrors the equivalent detail-view tests above.
+    def test_owner_can_view_timeline(self):
+        self.client.force_authenticate(self.owner)
+        response = self.client.get(self._timeline_url())
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_assigned_developer_can_view_timeline(self):
+        self.client.force_authenticate(self.assigned_dev)
+        response = self.client.get(self._timeline_url())
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_admin_can_view_timeline(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(self._timeline_url())
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_unrelated_customer_cannot_view_timeline(self):
+        self.client.force_authenticate(self.stranger)
+        response = self.client.get(self._timeline_url())
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_unassigned_developer_cannot_view_timeline(self):
+        self.client.force_authenticate(self.unassigned_dev)
+        response = self.client.get(self._timeline_url())
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

@@ -25,8 +25,14 @@ export function SiteHeader() {
         </Link>
 
         <nav className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" asChild>
+            <Link href="/packages">Packages</Link>
+          </Button>
           {!isLoading && isAuthenticated ? (
             <>
+              <Button variant="ghost" size="sm" asChild>
+                <Link href="/bookings">Bookings</Link>
+              </Button>
               <span className="hidden text-sm text-muted-foreground sm:inline">
                 {user?.username}
               </span>

@@ -19,8 +19,10 @@ export function proxy(request: NextRequest) {
 
   const hasHint = request.cookies.has(SESSION_HINT_COOKIE);
   if (!hasHint) {
+    const originalPath = request.nextUrl.pathname + request.nextUrl.search;
     const url = request.nextUrl.clone();
     url.pathname = "/unauthorized";
+    url.search = `?next=${encodeURIComponent(originalPath)}`;
     return NextResponse.redirect(url);
   }
 
