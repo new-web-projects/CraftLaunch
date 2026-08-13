@@ -17,4 +17,11 @@ urlpatterns = [
     path("api/auth/", include("apps.accounts.urls")),
     path("api/catalog/", include("apps.catalog.urls")),
     path("api/bookings/", include("apps.bookings.urls")),
+    # URL prefix is "settings", not "configuration", to match the
+    # contract Part 1's frontend/src/config/site.ts docstring already
+    # committed to (${API_URL}/api/settings/public/) — the Django app
+    # itself is still named apps.configuration internally, to avoid
+    # reading as the same thing as config.settings.* (this project's
+    # actual Django settings package).
+    path("api/settings/", include("apps.configuration.urls")),
 ]

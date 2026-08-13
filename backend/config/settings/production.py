@@ -13,6 +13,15 @@ from .base import BASE_DIR, MIDDLEWARE, env
 
 SECRET_KEY = env("DJANGO_SECRET_KEY")
 
+# See development.py's comment on this same setting. Left optional
+# here too rather than hard-requiring it (which would break existing
+# deployments the moment this app is added) — but a production
+# environment that never sets this is relying on a key derived from
+# SECRET_KEY, and losing that guarantee if SECRET_KEY is ever rotated
+# is a real risk worth setting this explicitly to avoid. Generate one
+# with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
+CONFIGURATION_ENCRYPTION_KEY = env("CONFIGURATION_ENCRYPTION_KEY", default=None)
+
 DEBUG = False
 
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS")

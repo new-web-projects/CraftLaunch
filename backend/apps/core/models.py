@@ -44,6 +44,40 @@ class UUIDModel(models.Model):
         abstract = True
 
 
+class SingletonModel(models.Model):
+    """
+    Exactly one row, always at pk=1. For Part 4's configuration models
+    (SiteConfiguration, SEOConfiguration, ...): there's one active
+    website configuration, not one per admin or per request, so a
+    normal table (insert new rows, query the "latest" or "active" one)
+    is the wrong shape — it invites a second row existing by accident
+    and code reading whichever one it happens to fetch first.
+
+    `load()` is the only supported way to get the instance: it
+    get-or-creates pk=1, so callers never handle "no configuration
+    row yet" as a special case — a fresh database still returns a
+    valid instance with the model's field defaults. `save()` forces
+    pk=1 regardless of what's set on the instance, and `delete()` is a
+    no-op — the row that every settings read depends on shouldn't be
+    deletable through the ORM's normal path.
+    """
+
+    class Meta:
+        abstract = True
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        pass
+
+    @classmethod
+    def load(cls):
+        obj, _created = cls.objects.get_or_create(pk=1)
+        return obj
+
+
 class SoftDeleteQuerySet(models.QuerySet):
     def alive(self):
         return self.filter(is_deleted=False)

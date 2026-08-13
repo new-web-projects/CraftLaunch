@@ -47,12 +47,14 @@ THIRD_PARTY_APPS = [
 ]
 
 # apps.accounts (Part 2) was the first real app; apps.core/catalog/
-# bookings (Part 3) follow the same registration pattern.
+# bookings (Part 3) and apps.configuration (Part 4) follow the same
+# registration pattern.
 LOCAL_APPS: list[str] = [
     "apps.accounts",
     "apps.core",
     "apps.catalog",
     "apps.bookings",
+    "apps.configuration",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS

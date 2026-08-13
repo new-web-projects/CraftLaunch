@@ -13,6 +13,7 @@ from .base import *  # noqa: F401,F403
 from .base import env
 
 SECRET_KEY = "django-insecure-test-only-6f2b8f"
+CONFIGURATION_ENCRYPTION_KEY = "IB4tqu98secYaHy1TVCXhBn_yc-lTM_a1Vv0nGGqx9U="  # fixed, test-only
 DEBUG = False
 ALLOWED_HOSTS = ["testserver", "localhost", "127.0.0.1"]
 

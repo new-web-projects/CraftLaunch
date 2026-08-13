@@ -14,6 +14,13 @@ SECRET_KEY = env(
     default="django-insecure-dev-only-do-not-use-in-production-6f2b8f",
 )
 
+# Encrypts apps.configuration's secret fields (SMTP password, storage/
+# payment API secrets) at rest — see apps/configuration/fields.py.
+# Unset here on purpose: that module falls back to deriving a key from
+# SECRET_KEY when this is None, so a fresh dev checkout works with
+# zero setup, same as everything else in this file.
+CONFIGURATION_ENCRYPTION_KEY = env("CONFIGURATION_ENCRYPTION_KEY", default=None)
+
 DEBUG = True
 
 ALLOWED_HOSTS = ["localhost", "127.0.0.1", "[::1]"]

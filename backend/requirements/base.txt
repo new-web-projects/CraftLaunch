@@ -34,3 +34,7 @@ django-filter==26.1
 # (see settings/production.py) — Django's built-in RedisCache backend
 # needs this client underneath it.
 redis==8.0.1
+
+# At-rest encryption for apps.configuration's secret fields (SMTP
+# password, storage/payment API secrets) — see apps/configuration/fields.py.
+cryptography==50.0.0
