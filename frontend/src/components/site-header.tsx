@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -7,10 +9,36 @@ import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useAuth } from "@/contexts/auth-context";
 import { siteConfigFallback } from "@/config/site";
+import { configurationApi } from "@/lib/configuration-api";
 
 export function SiteHeader() {
   const { user, isAuthenticated, isLoading, logout } = useAuth();
   const router = useRouter();
+
+  // Starts as the static fallback (no loading flash on first paint),
+  // then swaps to the admin-configured values once the fetch
+  // resolves — see @/config/site's getSiteConfig() docstring for why
+  // this is a client-side effect rather than fetched in a server
+  // component: this header renders on every page via the root
+  // layout, and converting that to fetch per-request is separate,
+  // larger work than making the value itself correct to fetch.
+  const [siteName, setSiteName] = useState<string>(siteConfigFallback.name);
+  const [logoUrl, setLogoUrl] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    configurationApi
+      .public()
+      .then((config) => {
+        if (cancelled) return;
+        if (config.site.website_name) setSiteName(config.site.website_name);
+        setLogoUrl(config.site.logo_url);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleLogout() {
     await logout();
@@ -20,8 +48,11 @@ export function SiteHeader() {
   return (
     <header className="border-b border-border">
       <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-6">
-        <Link href="/" className="font-semibold tracking-tight text-foreground">
-          {siteConfigFallback.name}
+        <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight text-foreground">
+          {logoUrl && (
+            <Image src={logoUrl} alt={siteName} width={28} height={28} className="h-7 w-7 object-contain" unoptimized />
+          )}
+          {siteName}
         </Link>
 
         <nav className="flex items-center gap-2">
