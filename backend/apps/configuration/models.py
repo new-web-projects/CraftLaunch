@@ -137,10 +137,11 @@ class SEOConfiguration(SingletonModel, TimeStampedModel):
 
 
 class StorageProviderChoices(models.TextChoices):
-    """Mirrors apps/bookings/storage.py's STORAGE_BACKENDS keys
-    exactly — these are not independent lists to keep in sync by
-    hand, this one *is* the source of truth once the frontend admin
-    panel starts writing to it (see that file's module docstring)."""
+    """Mirrors the provider names apps/bookings/storage.py's
+    get_storage_backend() dispatches on exactly — these are not
+    independent lists to keep in sync by hand, this one *is* the
+    source of truth: that function reads StorageConfiguration.active_provider
+    (this model) directly, see that file's module docstring."""
 
     LOCAL = "LOCAL", "Local disk"
     S3 = "S3", "Amazon S3"
