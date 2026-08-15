@@ -1,21 +1,23 @@
 import Link from "next/link";
 import { ApiStatus } from "@/components/api-status";
 import { Button } from "@/components/ui/button";
-import { siteConfigFallback } from "@/config/site";
+import { getSiteConfig } from "@/config/site";
 
-export default function Home() {
+export default async function Home() {
+  const site = await getSiteConfig();
+
   return (
     <main className="flex flex-1 flex-col items-center justify-center gap-8 px-6 py-24 text-center">
       <span className="rounded-full border border-border bg-secondary px-3 py-1 text-xs font-medium tracking-wide text-secondary-foreground uppercase">
-        Phase 2 — Authentication
+        Part 4 — Admin Panel &amp; Configuration
       </span>
 
       <div className="space-y-4">
         <h1 className="text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">
-          {siteConfigFallback.name}
+          {site.name}
         </h1>
         <p className="mx-auto max-w-md text-balance text-muted-foreground">
-          {siteConfigFallback.description}
+          {site.description}
         </p>
       </div>
 
@@ -31,9 +33,10 @@ export default function Home() {
       <ApiStatus />
 
       <p className="max-w-sm text-xs text-muted-foreground">
-        The customer, developer and admin dashboards ship in later parts of
-        this build. Accounts, login and profiles are live now — this screen
-        just confirms the foundation underneath them is still working.
+        Browse <Link href="/packages" className="underline underline-offset-2 hover:text-foreground">packages</Link>,
+        manage <Link href="/bookings" className="underline underline-offset-2 hover:text-foreground">bookings</Link>, or
+        head to the admin panel if you have access. This screen just confirms the foundation
+        underneath all of it is still working.
       </p>
     </main>
   );
