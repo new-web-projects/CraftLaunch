@@ -38,3 +38,12 @@ redis==8.0.1
 # At-rest encryption for apps.configuration's secret fields (SMTP
 # password, storage/payment API secrets) — see apps/configuration/fields.py.
 cryptography==50.0.0
+
+# Serves static assets directly from the app process. Unconditionally
+# in base.py's MIDDLEWARE (not per-environment), so it belongs in
+# base.txt, not just production.txt — a clean `pip install -r
+# requirements/development.txt` (what scripts/setup.sh and CI's dev/
+# test steps actually run) would otherwise fail with
+# ModuleNotFoundError the moment Django loads its middleware chain,
+# in every environment, not just production.
+whitenoise==6.12.0
