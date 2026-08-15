@@ -14,6 +14,8 @@ get_object/get/patch six times. Each subclass is just a `model` +
 
 import uuid
 
+from django.core import mail
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -30,6 +32,7 @@ from .models import (
     SEOConfiguration,
     SiteConfiguration,
     StorageConfiguration,
+    StorageProviderChoices,
 )
 from .serializers import (
     EmailConfigurationSerializer,
@@ -175,7 +178,7 @@ _MAX_ASSET_SIZE_BYTES = 5 * 1024 * 1024  # 5MB — branding images, not booking 
 
 
 class SiteAssetUploadView(APIView):
-    """POST /api/configuration/site/assets/<asset>/ — asset is one of
+    """POST /api/settings/site/assets/<asset>/ — asset is one of
     _ASSET_FIELDS's keys. Reuses apps.bookings.storage's provider
     abstraction rather than a second upload implementation: a site
     logo and a booking attachment are both "a file that needs to live
@@ -225,3 +228,195 @@ class SiteAssetUploadView(APIView):
                 pass
 
         return Response({"url": stored.url, "asset": asset}, status=status.HTTP_200_OK)
+
+
+class TestStorageConnectionView(APIView):
+    """POST /api/settings/storage/test/ — validates the *saved*
+    StorageConfiguration's credentials against the provider's own API,
+    not whatever's in the current unsaved form state. Save first, then
+    test — same reasoning as PATCH validating the stored row rather
+    than accepting ad-hoc credentials in this request's body, which
+    would mean a second, parallel path for "what credentials are we
+    even testing" to get out of sync with what's actually stored."""
+
+    permission_classes = [IsAdminRole]
+
+    def post(self, request):
+        config = StorageConfiguration.load()
+        success, detail = self._test(config)
+
+        config.last_tested_at = timezone.now()
+        config.last_test_success = success
+        config.save(update_fields=["last_tested_at", "last_test_success", "updated_at"])
+
+        return Response(
+            {"success": success, "detail": detail},
+            status=status.HTTP_200_OK if success else status.HTTP_400_BAD_REQUEST,
+        )
+
+    def _test(self, config: StorageConfiguration) -> tuple[bool, str]:
+        provider = config.active_provider
+        if provider == StorageProviderChoices.LOCAL:
+            return True, "Local disk storage doesn't require a connection test."
+
+        if provider == StorageProviderChoices.S3:
+            if not (config.s3_access_key_id and config.s3_secret_access_key and config.s3_bucket_name):
+                return False, "S3 access key, secret key, and bucket name are all required."
+            try:
+                import boto3
+                from botocore.exceptions import BotoCoreError, ClientError
+
+                client = boto3.client(
+                    "s3",
+                    aws_access_key_id=config.s3_access_key_id,
+                    aws_secret_access_key=config.s3_secret_access_key,
+                    region_name=config.s3_region or None,
+                )
+                client.head_bucket(Bucket=config.s3_bucket_name)
+                return True, f"Connected to S3 bucket '{config.s3_bucket_name}'."
+            except (ClientError, BotoCoreError) as exc:
+                return False, f"S3 connection failed: {exc}"
+            except Exception as exc:  # noqa: BLE001 — surface as a test failure, not a 500
+                return False, f"S3 connection failed: {exc}"
+
+        if provider == StorageProviderChoices.CLOUDINARY:
+            if not (config.cloudinary_cloud_name and config.cloudinary_api_key and config.cloudinary_api_secret):
+                return False, "Cloudinary cloud name, API key, and API secret are all required."
+            try:
+                import cloudinary
+                import cloudinary.api
+
+                cloudinary.config(
+                    cloud_name=config.cloudinary_cloud_name,
+                    api_key=config.cloudinary_api_key,
+                    api_secret=config.cloudinary_api_secret,
+                )
+                cloudinary.api.ping()
+                return True, f"Connected to Cloudinary account '{config.cloudinary_cloud_name}'."
+            except Exception as exc:  # noqa: BLE001 — Cloudinary's SDK raises its own broad Error type
+                return False, f"Cloudinary connection failed: {exc}"
+
+        return False, f"Unknown provider '{provider}'."
+
+
+class TestEmailConnectionView(APIView):
+    """POST /api/settings/email/test/ — opens (and immediately closes)
+    a real SMTP connection using the saved EmailConfiguration. Doesn't
+    send an email by default — that would mean every credential check
+    also spams an inbox — but sends one to the requesting admin if
+    `send_test_email: true` is in the request body."""
+
+    permission_classes = [IsAdminRole]
+
+    def post(self, request):
+        config = EmailConfiguration.load()
+
+        if not config.smtp_host:
+            success, detail = False, "SMTP host is required."
+        else:
+            success, detail = self._test_connection(config)
+            if success and request.data.get("send_test_email"):
+                success, detail = self._send_test_email(config, request.user)
+
+        config.last_tested_at = timezone.now()
+        config.last_test_success = success
+        config.save(update_fields=["last_tested_at", "last_test_success", "updated_at"])
+
+        return Response(
+            {"success": success, "detail": detail},
+            status=status.HTTP_200_OK if success else status.HTTP_400_BAD_REQUEST,
+        )
+
+    def _test_connection(self, config: EmailConfiguration) -> tuple[bool, str]:
+        try:
+            connection = mail.get_connection(
+                backend="django.core.mail.backends.smtp.EmailBackend",
+                host=config.smtp_host,
+                port=config.smtp_port,
+                username=config.smtp_username or None,
+                password=config.smtp_password or None,
+                use_tls=config.use_tls,
+                use_ssl=config.use_ssl,
+                timeout=10,
+            )
+            connection.open()
+            connection.close()
+            return True, f"Connected to {config.smtp_host}:{config.smtp_port}."
+        except Exception as exc:  # noqa: BLE001 — smtplib raises many distinct exception types
+            return False, f"SMTP connection failed: {exc}"
+
+    def _send_test_email(self, config: EmailConfiguration, admin_user) -> tuple[bool, str]:
+        try:
+            connection = mail.get_connection(
+                backend="django.core.mail.backends.smtp.EmailBackend",
+                host=config.smtp_host,
+                port=config.smtp_port,
+                username=config.smtp_username or None,
+                password=config.smtp_password or None,
+                use_tls=config.use_tls,
+                use_ssl=config.use_ssl,
+                timeout=10,
+            )
+            mail.send_mail(
+                subject="CraftLaunch — test email",
+                message="This is a test email from the CraftLaunch admin settings panel.",
+                from_email=config.sender_email or None,
+                recipient_list=[admin_user.email],
+                connection=connection,
+            )
+            return True, f"Test email sent to {admin_user.email}."
+        except Exception as exc:  # noqa: BLE001
+            return False, f"Sending the test email failed: {exc}"
+
+
+class TestPaymentConnectionView(APIView):
+    """POST /api/settings/payment/test/ — validates the saved Razorpay
+    key pair against Razorpay's API. A plain authenticated GET is a
+    credential check, not "implementing payments" — Part 4's spec asks
+    for configuration only, and this doesn't create, capture, or
+    refund anything. Uses urllib (stdlib) rather than adding the
+    razorpay SDK as a new dependency for one lightweight ping."""
+
+    permission_classes = [IsAdminRole]
+
+    def post(self, request):
+        config = PaymentConfiguration.load()
+        success, detail = self._test(config)
+
+        config.last_tested_at = timezone.now()
+        config.last_test_success = success
+        config.save(update_fields=["last_tested_at", "last_test_success", "updated_at"])
+
+        return Response(
+            {"success": success, "detail": detail},
+            status=status.HTTP_200_OK if success else status.HTTP_400_BAD_REQUEST,
+        )
+
+    def _test(self, config: PaymentConfiguration) -> tuple[bool, str]:
+        if not (config.razorpay_key_id and config.razorpay_key_secret):
+            return False, "Razorpay key ID and key secret are both required."
+
+        import base64
+        import urllib.error
+        import urllib.request
+
+        credentials = base64.b64encode(
+            f"{config.razorpay_key_id}:{config.razorpay_key_secret}".encode()
+        ).decode()
+        req = urllib.request.Request(
+            "https://api.razorpay.com/v1/payments?count=1",
+            headers={"Authorization": f"Basic {credentials}"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as response:
+                if response.status == 200:
+                    return True, "Razorpay credentials are valid."
+                return False, f"Razorpay returned HTTP {response.status}."
+        except urllib.error.HTTPError as exc:
+            if exc.code == 401:
+                return False, "Razorpay rejected these credentials (401 Unauthorized)."
+            return False, f"Razorpay returned HTTP {exc.code}."
+        except urllib.error.URLError as exc:
+            return False, f"Could not reach Razorpay: {exc.reason}"
+        except Exception as exc:  # noqa: BLE001
+            return False, f"Razorpay connection failed: {exc}"
