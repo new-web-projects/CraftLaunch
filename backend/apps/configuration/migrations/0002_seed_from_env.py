@@ -46,16 +46,28 @@ def seed_from_env(apps, schema_editor):
         },
     )
 
+    # Django ships its own global defaults for EMAIL_HOST ("localhost"),
+    # EMAIL_PORT (25), and EMAIL_USE_TLS (False) — they exist on the
+    # settings object even in development.py/test.py, which never
+    # mention them (console/locmem backends don't need them). A plain
+    # getattr(settings, "EMAIL_HOST", "") would silently return
+    # Django's built-in "localhost" there instead of the intended ""
+    # fallback, since the attribute genuinely exists — it's just not
+    # anything this project configured. Only production.py's SMTP
+    # backend means these values were actually meant for something.
+    is_smtp_configured = (
+        getattr(settings, "EMAIL_BACKEND", "") == "django.core.mail.backends.smtp.EmailBackend"
+    )
     EmailConfiguration.objects.get_or_create(
         pk=1,
         defaults={
-            "smtp_host": getattr(settings, "EMAIL_HOST", "") or "",
-            "smtp_port": getattr(settings, "EMAIL_PORT", 587),
-            "smtp_username": getattr(settings, "EMAIL_HOST_USER", "") or "",
-            "smtp_password": getattr(settings, "EMAIL_HOST_PASSWORD", "") or "",
+            "smtp_host": (getattr(settings, "EMAIL_HOST", "") or "") if is_smtp_configured else "",
+            "smtp_port": getattr(settings, "EMAIL_PORT", 587) if is_smtp_configured else 587,
+            "smtp_username": (getattr(settings, "EMAIL_HOST_USER", "") or "") if is_smtp_configured else "",
+            "smtp_password": (getattr(settings, "EMAIL_HOST_PASSWORD", "") or "") if is_smtp_configured else "",
             "sender_email": getattr(settings, "DEFAULT_FROM_EMAIL", "") or "",
             "reply_email": getattr(settings, "DEFAULT_FROM_EMAIL", "") or "",
-            "use_tls": getattr(settings, "EMAIL_USE_TLS", True),
+            "use_tls": getattr(settings, "EMAIL_USE_TLS", True) if is_smtp_configured else True,
         },
     )
 
