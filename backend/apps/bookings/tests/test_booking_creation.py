@@ -182,6 +182,8 @@ class BookingStatusTransitionTests(BookingTestFixtureMixin, APITestCase):
             format="json",
         )
         booking_id = create.data["id"]
-        response = self.client.post(reverse("bookings:cancel", args=[booking_id]))
+        response = self.client.post(
+            reverse("bookings:cancel", args=[booking_id]), {"reason": "Changed my mind about this booking."}
+        )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["status"]["code"], "cancelled")

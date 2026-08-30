@@ -97,6 +97,18 @@ def validate_attachment(filename: str, size_bytes: int) -> str:
     return EXTENSION_TO_CATEGORY[ext]
 
 
+def validate_rejection_reason(value: str) -> None:
+    value = (value or "").strip()
+    if len(value) < 5:
+        raise ValidationError("A rejection reason is required.")
+
+
+def validate_revision_reason(value: str) -> None:
+    value = (value or "").strip()
+    if len(value) < 5:
+        raise ValidationError("A reason for the revision request is required.")
+
+
 def check_duplicate_submission(idempotency_key: str | None) -> None:
     """Raises if a booking with this idempotency key already exists.
     Actual creation still relies on the DB-level unique constraint as

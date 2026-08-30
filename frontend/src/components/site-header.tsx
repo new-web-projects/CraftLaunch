@@ -62,6 +62,9 @@ export function SiteHeader() {
           {!isLoading && isAuthenticated ? (
             <>
               <Button variant="ghost" size="sm" asChild>
+                <Link href={user?.role === "ADMIN" ? "/admin" : "/dashboard"}>Dashboard</Link>
+              </Button>
+              <Button variant="ghost" size="sm" asChild>
                 <Link href="/bookings">Bookings</Link>
               </Button>
               <span className="hidden text-sm text-muted-foreground sm:inline">

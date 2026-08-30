@@ -158,6 +158,22 @@ class Booking(UUIDModel, TimeStampedModel, SoftDeleteModel):
     def __str__(self):
         return f"{self.website_name} ({self.customer.username})"
 
+    @property
+    def progress_percent(self) -> int:
+        """
+        Always derived from completed ProjectMilestone rows, never a
+        stored/typed number — see ProjectMilestone's docstring. Reads
+        via `.all()` (not `.filter()`/`.count()`, which always hit the
+        DB) so this benefits from `.prefetch_related("milestones")`
+        when the caller used it; 0 before a project is accepted, since
+        no milestones exist yet at that point.
+        """
+        milestones = list(self.milestones.all())
+        if not milestones:
+            return 0
+        completed = sum(1 for m in milestones if m.is_completed)
+        return round(completed / len(milestones) * 100)
+
 
 class BookingRequirement(models.Model):
     """Through table: which WebsiteFeatures a customer selected as
@@ -262,6 +278,20 @@ class BookingTimeline(models.Model):
         DEVELOPER_ASSIGNED = "DEVELOPER_ASSIGNED", "Developer assigned"
         DEVELOPER_UNASSIGNED = "DEVELOPER_UNASSIGNED", "Developer unassigned"
         BOOKING_CANCELLED = "BOOKING_CANCELLED", "Booking cancelled"
+        # --- Part 5: project lifecycle. BookingTimeline already reads as
+        # an "append-only audit trail" (see class docstring) so these
+        # entries double as Part 5's "Audit Log Foundation" too — a
+        # second, parallel audit table would just be this table again
+        # under a different name.
+        PROJECT_ACCEPTED = "PROJECT_ACCEPTED", "Project accepted"
+        PROJECT_REJECTED = "PROJECT_REJECTED", "Project rejected"
+        PROJECT_STARTED = "PROJECT_STARTED", "Project started"
+        MILESTONE_COMPLETED = "MILESTONE_COMPLETED", "Milestone completed"
+        REVISION_REQUESTED = "REVISION_REQUESTED", "Revision requested"
+        DELIVERY_SUBMITTED = "DELIVERY_SUBMITTED", "Delivery submitted"
+        DELIVERY_ACCEPTED = "DELIVERY_ACCEPTED", "Delivery accepted"
+        PROJECT_COMPLETED = "PROJECT_COMPLETED", "Project completed"
+        REQUIREMENTS_UPDATED = "REQUIREMENTS_UPDATED", "Requirements updated"
 
     booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name="timeline_events")
     event_type = models.CharField(max_length=30, choices=EventType.choices)
@@ -332,7 +362,176 @@ class DeveloperAssignment(models.Model):
                 condition=models.Q(is_active=True),
                 name="unique_active_assignment_per_developer",
             ),
+            # Part 5: the original constraint above only stopped the same
+            # developer from having two active rows on one booking — it
+            # didn't stop two *different* developers from both being
+            # active on the same booking at once, which is exactly the
+            # race ProjectService.accept_project() has to prevent. This
+            # is the DB-level backstop behind that service's
+            # select_for_update() lock: even a bug or a write that
+            # bypasses the service can't leave two developers active on
+            # one booking.
+            models.UniqueConstraint(
+                fields=["booking"],
+                condition=models.Q(is_active=True),
+                name="unique_active_assignment_per_booking",
+            ),
         ]
 
     def __str__(self):
         return f"{self.developer} on {self.booking_id}"
+
+
+class ProjectMilestone(models.Model):
+    """
+    Ordered, per-booking checkpoints created once a booking is accepted
+    (see ProjectService.accept_project). A booking's progress is always
+    "completed milestones / total milestones" — derived, never a
+    manually typed percentage, per the Part 5 spec.
+    """
+
+    class Stage(models.TextChoices):
+        REQUIREMENTS = "REQUIREMENTS", "Requirements"
+        PLANNING = "PLANNING", "Planning"
+        DESIGN = "DESIGN", "Design"
+        DEVELOPMENT = "DEVELOPMENT", "Development"
+        TESTING = "TESTING", "Testing"
+        DELIVERY = "DELIVERY", "Delivery"
+
+    # Fixed order every booking's milestone set is created in — kept as
+    # a plain tuple (not a DB table like ProjectStatus) because, unlike
+    # workflow statuses, this list isn't meant to be admin-editable per
+    # the spec; it's a fixed methodology, not site configuration.
+    DEFAULT_STAGES = [
+        Stage.REQUIREMENTS,
+        Stage.PLANNING,
+        Stage.DESIGN,
+        Stage.DEVELOPMENT,
+        Stage.TESTING,
+        Stage.DELIVERY,
+    ]
+
+    booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name="milestones")
+    stage = models.CharField(max_length=20, choices=Stage.choices)
+    sort_order = models.PositiveIntegerField(default=0)
+    is_completed = models.BooleanField(default=False, db_index=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    completed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+
+    class Meta:
+        ordering = ["sort_order"]
+        constraints = [
+            models.UniqueConstraint(fields=["booking", "stage"], name="unique_stage_per_booking"),
+        ]
+
+    def __str__(self):
+        return f"{self.booking_id} — {self.get_stage_display()}"
+
+
+class RevisionRequest(models.Model):
+    """
+    A customer's ask for changes once a project is far enough along to
+    review (waiting-for-customer or delivered). `status` tracks whether
+    this request still falls within the Package's paid-for
+    `revision_count`, or has exhausted it — see RevisionService for how
+    that count is enforced; this model just records the outcome.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        ACKNOWLEDGED = "ACKNOWLEDGED", "Acknowledged"
+        LIMIT_EXCEEDED = "LIMIT_EXCEEDED", "Exceeds included revisions"
+
+    booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name="revision_requests")
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+"
+    )
+    reason = models.CharField(max_length=255)
+    description = models.TextField(blank=True, default="")
+    attachment = models.ForeignKey(
+        ProjectAttachment, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["booking", "-created_at"])]
+
+    def __str__(self):
+        return f"Revision request on {self.booking_id} ({self.status})"
+
+
+class ProjectDelivery(models.Model):
+    """
+    One row per booking, created (and later updated, if a revision
+    leads to a re-delivery) when a developer submits a delivery.
+    OneToOne rather than fields on Booking itself: keeps Booking's own
+    table free of delivery-specific columns that are null for the vast
+    majority of a booking's lifetime, and a booking only ever has one
+    *current* delivery — a re-delivery replaces this row's contents
+    rather than creating a new one, so the customer always sees the
+    latest package.
+
+    Deliberately independent from payment processing (no price/paid
+    fields here at all) — the spec is explicit that delivery must not
+    be coupled to a payment system that doesn't exist yet.
+    """
+
+    booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name="delivery")
+    delivered_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+"
+    )
+    notes = models.TextField(blank=True, default="")
+    final_url = models.URLField(blank=True, default="")
+    access_instructions = models.TextField(blank=True, default="")
+    files = models.ManyToManyField(ProjectAttachment, blank=True, related_name="deliveries")
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    accepted_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Delivery for {self.booking_id}"
+
+
+class NotificationEvent(models.Model):
+    """
+    Event-only notification foundation. The spec is explicit: no
+    email/SMS/push/WhatsApp delivery in this part — this table exists
+    so those future delivery channels have a durable, queryable record
+    of what *should* have notified whom, rather than being retrofitted
+    later. It also backs the "Notifications" nav item's actual page:
+    an in-app, read/unread inbox, with no outbound delivery attached.
+    """
+
+    class EventType(models.TextChoices):
+        BOOKING_ACCEPTED = "BOOKING_ACCEPTED", "Booking accepted"
+        BOOKING_REJECTED = "BOOKING_REJECTED", "Booking rejected"
+        DEVELOPER_ASSIGNED = "DEVELOPER_ASSIGNED", "Developer assigned"
+        PROJECT_STARTED = "PROJECT_STARTED", "Project started"
+        REVISION_REQUESTED = "REVISION_REQUESTED", "Revision requested"
+        DELIVERY_SUBMITTED = "DELIVERY_SUBMITTED", "Delivery submitted"
+        PROJECT_COMPLETED = "PROJECT_COMPLETED", "Project completed"
+        PROJECT_CANCELLED = "PROJECT_CANCELLED", "Project cancelled"
+
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notification_events"
+    )
+    booking = models.ForeignKey(
+        Booking, on_delete=models.CASCADE, null=True, blank=True, related_name="notification_events"
+    )
+    event_type = models.CharField(max_length=30, choices=EventType.choices)
+    message = models.CharField(max_length=255)
+    is_read = models.BooleanField(default=False, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["recipient", "-created_at"]),
+            models.Index(fields=["recipient", "is_read"]),
+        ]
+
+    def __str__(self):
+        return f"{self.event_type} → {self.recipient_id}"

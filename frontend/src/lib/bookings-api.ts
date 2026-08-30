@@ -1,6 +1,22 @@
 import { ApiError, type ApiErrorBody } from "@/types/auth";
 import { apiClient, getAccessToken } from "@/lib/api-client";
-import type { BookingDetail, BookingListItem, BookingTimelineEvent, CreateBookingInput, ProjectAttachment } from "@/types/bookings";
+import type {
+  BookingDetail,
+  BookingListItem,
+  BookingNote,
+  BookingTimelineEvent,
+  CreateBookingInput,
+  CreateRevisionInput,
+  CustomerDashboardData,
+  CustomerRequirement,
+  DeveloperDashboardData,
+  NotificationEvent,
+  ProjectAttachment,
+  ProjectDelivery,
+  ProjectMilestone,
+  RevisionRequest,
+  SubmitDeliveryInput,
+} from "@/types/bookings";
 
 interface PaginatedResponse<T> {
   count: number;
@@ -12,7 +28,7 @@ interface PaginatedResponse<T> {
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export const bookingsApi = {
-  list: (params?: { status__code?: string; ordering?: string }) => {
+  list: (params?: { status?: string; ordering?: string }) => {
     const query = params ? `?${new URLSearchParams(params as Record<string, string>)}` : "";
     return apiClient.get<PaginatedResponse<BookingListItem>>(`/api/bookings/${query}`);
   },
@@ -60,4 +76,64 @@ export const bookingsApi = {
     }
     return data as ProjectAttachment;
   },
+
+  // ---- Part 5: dashboards ----
+
+  customerDashboard: () => apiClient.get<CustomerDashboardData>("/api/bookings/dashboard/customer/"),
+  developerDashboard: () => apiClient.get<DeveloperDashboardData>("/api/bookings/dashboard/developer/"),
+
+  // ---- Part 5: developer project requests ----
+
+  requests: (params?: { ordering?: string }) => {
+    const query = params ? `?${new URLSearchParams(params as Record<string, string>)}` : "";
+    return apiClient.get<PaginatedResponse<BookingDetail>>(`/api/bookings/requests/${query}`);
+  },
+  accept: (id: string) => apiClient.post<BookingDetail>(`/api/bookings/${id}/accept/`, {}),
+  reject: (id: string, reason: string) =>
+    apiClient.post<BookingDetail>(`/api/bookings/${id}/reject/`, { reason }),
+
+  // ---- Part 5: assigned-developer project management ----
+
+  start: (id: string) => apiClient.post<BookingDetail>(`/api/bookings/${id}/start/`, {}),
+  markWaitingForCustomer: (id: string, note?: string) =>
+    apiClient.post<BookingDetail>(`/api/bookings/${id}/mark-waiting-for-customer/`, { note }),
+  markReady: (id: string, note?: string) =>
+    apiClient.post<BookingDetail>(`/api/bookings/${id}/mark-ready/`, { note }),
+
+  // ---- Part 5: milestones ----
+
+  milestones: (id: string) => apiClient.get<ProjectMilestone[]>(`/api/bookings/${id}/milestones/`),
+  updateMilestone: (id: string, milestoneId: number, isCompleted: boolean) =>
+    apiClient.patch<ProjectMilestone>(`/api/bookings/${id}/milestones/${milestoneId}/`, {
+      is_completed: isCompleted,
+    }),
+
+  // ---- Part 5: delivery ----
+
+  getDelivery: (id: string) => apiClient.get<ProjectDelivery | null>(`/api/bookings/${id}/delivery/`),
+  submitDelivery: (id: string, input: SubmitDeliveryInput) =>
+    apiClient.post<ProjectDelivery>(`/api/bookings/${id}/delivery/`, input),
+  acceptDelivery: (id: string) => apiClient.post<BookingDetail>(`/api/bookings/${id}/delivery/accept/`, {}),
+
+  // ---- Part 5: revisions ----
+
+  revisions: (id: string) => apiClient.get<RevisionRequest[]>(`/api/bookings/${id}/revisions/`),
+  requestRevision: (id: string, input: CreateRevisionInput) =>
+    apiClient.post<RevisionRequest>(`/api/bookings/${id}/revisions/`, input),
+
+  // ---- Part 5: notifications ----
+
+  notifications: () => apiClient.get<PaginatedResponse<NotificationEvent>>("/api/bookings/notifications/"),
+  markNotificationRead: (id: number) =>
+    apiClient.post<NotificationEvent>(`/api/bookings/notifications/${id}/read/`, {}),
+
+  // ---- Part 5: notes and requirements ----
+
+  notes: (id: string) => apiClient.get<BookingNote[]>(`/api/bookings/${id}/notes/`),
+  addNote: (id: string, content: string) =>
+    apiClient.post<BookingNote>(`/api/bookings/${id}/notes/`, { content }),
+
+  requirements: (id: string) => apiClient.get<CustomerRequirement[]>(`/api/bookings/${id}/requirements/`),
+  addRequirement: (id: string, input: { title: string; description?: string; priority?: string }) =>
+    apiClient.post<CustomerRequirement>(`/api/bookings/${id}/requirements/`, input),
 };

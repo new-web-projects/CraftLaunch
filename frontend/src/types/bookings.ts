@@ -65,6 +65,110 @@ export interface DeveloperAssignment {
   is_active: boolean;
 }
 
+export const MILESTONE_STAGES = [
+  "REQUIREMENTS",
+  "PLANNING",
+  "DESIGN",
+  "DEVELOPMENT",
+  "TESTING",
+  "DELIVERY",
+] as const;
+
+export type MilestoneStage = (typeof MILESTONE_STAGES)[number];
+
+export interface ProjectMilestone {
+  id: number;
+  stage: MilestoneStage;
+  stage_display: string;
+  sort_order: number;
+  is_completed: boolean;
+  completed_at: string | null;
+  completed_by: BookingActor | null;
+}
+
+export interface ProjectDelivery {
+  notes: string;
+  final_url: string;
+  access_instructions: string;
+  files: ProjectAttachment[];
+  delivered_by: BookingActor | null;
+  delivered_at: string | null;
+  accepted_at: string | null;
+}
+
+export interface SubmitDeliveryInput {
+  notes?: string;
+  final_url?: string;
+  access_instructions?: string;
+  attachment_ids?: string[];
+}
+
+export type RevisionStatus = "PENDING" | "ACKNOWLEDGED" | "LIMIT_EXCEEDED";
+
+export interface RevisionRequest {
+  id: number;
+  reason: string;
+  description: string;
+  attachment: ProjectAttachment | null;
+  status: RevisionStatus;
+  status_display: string;
+  requested_by: BookingActor | null;
+  created_at: string;
+}
+
+export interface CreateRevisionInput {
+  reason: string;
+  description?: string;
+  attachment_id?: string | null;
+}
+
+export interface NotificationEvent {
+  id: number;
+  event_type: string;
+  event_type_display: string;
+  message: string;
+  booking_id: string | null;
+  is_read: boolean;
+  created_at: string;
+}
+
+export interface RecentActivityEvent {
+  id: number;
+  event_type: string;
+  event_type_display: string;
+  actor: BookingActor | null;
+  description: string;
+  booking_id: string;
+  website_name: string;
+  created_at: string;
+}
+
+export interface CustomerDashboardData {
+  counts: {
+    active_projects: number;
+    pending_bookings: number;
+    completed_projects: number;
+    cancelled_projects: number;
+    awaiting_your_action: number;
+  };
+  recently_updated: BookingListItem[];
+  recent_activity: RecentActivityEvent[];
+}
+
+export interface DeveloperDashboardData {
+  counts: {
+    new_project_requests: number;
+    accepted_projects: number;
+    active_projects: number;
+    waiting_for_customer: number;
+    ready_for_delivery: number;
+    completed_projects: number;
+    cancelled_projects: number;
+  };
+  upcoming_deadlines: BookingListItem[];
+  recent_activity: RecentActivityEvent[];
+}
+
 export type BusinessType =
   | "INDIVIDUAL"
   | "STARTUP"
@@ -87,6 +191,7 @@ export interface BookingListItem {
   status: ProjectStatus;
   preferred_delivery_date: string | null;
   created_at: string;
+  progress_percent: number;
 }
 
 export interface BookingDetail extends BookingListItem {
@@ -101,6 +206,9 @@ export interface BookingDetail extends BookingListItem {
   timeline_events: BookingTimelineEvent[];
   notes: BookingNote[];
   developer_assignments: DeveloperAssignment[];
+  milestones: ProjectMilestone[];
+  delivery: ProjectDelivery | null;
+  revision_requests: RevisionRequest[];
 }
 
 export interface CreateBookingInput {
