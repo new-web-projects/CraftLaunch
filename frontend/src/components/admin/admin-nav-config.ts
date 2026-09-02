@@ -20,6 +20,7 @@ import {
   FileText,
   ClipboardList,
   AlertTriangle,
+  Receipt,
 } from "lucide-react";
 
 export interface AdminNavItem {
@@ -75,6 +76,10 @@ export const ADMIN_NAV: AdminNavGroup[] = [
       { label: "Package Settings", href: "/admin/package-settings", icon: Package, status: "planned" },
       { label: "Booking Settings", href: "/admin/booking-settings", icon: CalendarClock, status: "planned" },
     ],
+  },
+  {
+    label: "Payments",
+    items: [{ label: "Payments", href: "/admin/payments", icon: Receipt, status: "live" }],
   },
   {
     label: "People",

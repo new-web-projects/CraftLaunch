@@ -54,5 +54,7 @@ CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"
 REST_FRAMEWORK = {
     **REST_FRAMEWORK,
     "DEFAULT_THROTTLE_CLASSES": [],
-    "DEFAULT_THROTTLE_RATES": {"anon": None, "user": None, "login": None, "password_reset": None},
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": None, "user": None, "login": None, "password_reset": None, "payment_action": None,
+    },
 }

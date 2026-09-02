@@ -47,14 +47,15 @@ THIRD_PARTY_APPS = [
 ]
 
 # apps.accounts (Part 2) was the first real app; apps.core/catalog/
-# bookings (Part 3) and apps.configuration (Part 4) follow the same
-# registration pattern.
+# bookings (Part 3), apps.configuration (Part 4), and apps.payments
+# (Part 6) follow the same registration pattern.
 LOCAL_APPS: list[str] = [
     "apps.accounts",
     "apps.core",
     "apps.catalog",
     "apps.bookings",
     "apps.configuration",
+    "apps.payments",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -176,6 +177,7 @@ REST_FRAMEWORK = {
         # Scoped/custom throttles used by specific views:
         "login": "5/min",
         "password_reset": "3/hour",
+        "payment_action": "20/min",
     },
 }
 
@@ -297,6 +299,19 @@ AWS_S3_REGION_NAME = env("AWS_S3_REGION_NAME", default=None)
 CLOUDINARY_CLOUD_NAME = env("CLOUDINARY_CLOUD_NAME", default=None)
 CLOUDINARY_API_KEY = env("CLOUDINARY_API_KEY", default=None)
 CLOUDINARY_API_SECRET = env("CLOUDINARY_API_SECRET", default=None)
+
+# Part 6 — read only to seed PaymentConfiguration's first row on
+# migrate (apps/configuration/migrations/0003_seed_razorpay_from_env.py),
+# the same one-time bootstrap AWS_ACCESS_KEY_ID/CLOUDINARY_CLOUD_NAME
+# get above. Nothing in apps.payments reads these settings directly —
+# every actual Razorpay API call goes through
+# apps.payments.services.RazorpayClientFactory, which reads the
+# database row (admin-editable, encrypted at rest — see
+# apps/configuration/fields.py) so switching test/live mode never
+# needs a redeploy.
+RAZORPAY_KEY_ID = env("RAZORPAY_KEY_ID", default=None)
+RAZORPAY_KEY_SECRET = env("RAZORPAY_KEY_SECRET", default=None)
+RAZORPAY_WEBHOOK_SECRET = env("RAZORPAY_WEBHOOK_SECRET", default=None)
 
 # Booking attachment validation (bookings/validators.py)
 BOOKING_ATTACHMENT_MAX_SIZE_MB = env.int("BOOKING_ATTACHMENT_MAX_SIZE_MB", default=25)

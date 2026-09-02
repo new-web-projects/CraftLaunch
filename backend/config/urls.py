@@ -24,4 +24,5 @@ urlpatterns = [
     # reading as the same thing as config.settings.* (this project's
     # actual Django settings package).
     path("api/settings/", include("apps.configuration.urls")),
+    path("api/payments/", include("apps.payments.urls")),
 ]

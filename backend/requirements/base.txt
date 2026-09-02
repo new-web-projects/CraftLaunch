@@ -47,3 +47,8 @@ cryptography==50.0.0
 # ModuleNotFoundError the moment Django loads its middleware chain,
 # in every environment, not just production.
 whitenoise==6.12.0
+
+# Part 6 — official Razorpay Python SDK (apps/payments). Order
+# creation, and signature verification for both checkout payments and
+# webhooks — see apps/payments/services.py's RazorpayClientFactory.
+razorpay==2.0.1

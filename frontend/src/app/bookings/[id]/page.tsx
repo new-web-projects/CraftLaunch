@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
+import { CreditCard } from "lucide-react";
 
 import { RequireAuth } from "@/components/auth/require-auth";
 import { AttachmentList } from "@/components/bookings/attachment-list";
@@ -408,6 +410,14 @@ function BookingDetailContent() {
         </div>
 
         <div className="space-y-6">
+          {showLifecyclePanels && (
+            <Button variant="outline" className="w-full" asChild>
+              <Link href={`/bookings/${booking.id}/payment`}>
+                <CreditCard className="mr-1.5 h-3.5 w-3.5" /> View Payments
+              </Link>
+            </Button>
+          )}
+
           <Card>
             <CardHeader>
               <CardTitle>Status</CardTitle>

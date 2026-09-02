@@ -391,6 +391,21 @@ class ProjectLifecycleService:
     @staticmethod
     @transaction.atomic
     def start_project(booking: Booking, *, developer) -> Booking:
+        # Part 6: gated on the advance payment being captured — but
+        # only once FeatureFlags.payments_enabled is actually turned
+        # on. Defaults to False, so Parts 1–5's own tests (which never
+        # touch a payment) are completely unaffected; a platform that
+        # hasn't opted into payments yet keeps Part 5's original
+        # behavior exactly. Local import to avoid apps.bookings
+        # depending on apps.payments at module-load time — see
+        # apps/payments/services.py's module docstring for the
+        # one-directional dependency this preserves.
+        if get_feature_flags().payments_enabled:
+            from apps.payments.services import PaymentCalculationService
+
+            if not PaymentCalculationService.is_advance_captured(booking):
+                raise ValidationError("The advance payment must be completed before work can begin.")
+
         booking = BookingService.transition_status(booking, "in_progress", actor=developer)
         BookingTimeline.objects.create(
             booking=booking,
@@ -525,6 +540,15 @@ class DeliveryService:
             delivery = booking.delivery
         except ProjectDelivery.DoesNotExist:
             raise ValidationError("There is no delivery on record for this project.")
+
+        # Part 6: same conditional gate as start_project above — only
+        # enforced once payments_enabled is on, so this stays a no-op
+        # for Parts 1–5's existing behavior/tests.
+        if get_feature_flags().payments_enabled:
+            from apps.payments.services import PaymentCalculationService
+
+            if not PaymentCalculationService.is_final_captured(booking):
+                raise ValidationError("The final payment must be completed before this delivery can be accepted.")
 
         delivery.accepted_at = timezone.now()
         delivery.save(update_fields=["accepted_at"])

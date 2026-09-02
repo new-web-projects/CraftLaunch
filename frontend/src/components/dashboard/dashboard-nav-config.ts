@@ -8,6 +8,7 @@ import {
   Inbox,
   LayoutDashboard,
   PlusCircle,
+  Receipt,
   Settings,
   User,
 } from "lucide-react";
@@ -39,6 +40,7 @@ export const CUSTOMER_NAV: DashboardNavItem[] = [
     icon: FolderKanban,
   },
   { label: "New Booking", href: "/packages", icon: PlusCircle },
+  { label: "Payment History", href: "/dashboard/payments", icon: Receipt },
   { label: "Profile", href: "/profile", icon: User },
   { label: "Notifications", href: "/dashboard/notifications", icon: Bell },
   { label: "Settings", href: "/profile", icon: Settings },
