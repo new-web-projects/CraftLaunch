@@ -1,3 +1,4 @@
+# File Path: backend/apps/payments/services.py
 """
 Business logic for Razorpay payments. Every rupee amount here is a
 Decimal; every conversion to/from paise goes through money.py; every
@@ -7,25 +8,38 @@ apps.bookings.services.BookingService.transition_status) so an
 can't happen anywhere in this file.
 
 Layout:
-  RazorpayClientFactory    Builds an authenticated razorpay.Client
-                            from apps.configuration's PaymentConfiguration.
-                            The one place a Client gets constructed.
-  PaymentEventService       Tiny helper — one line to append a
-                            PaymentEvent, mirroring
-                            apps.bookings.services.NotificationService.
-  PaymentCalculationService The one source of truth for every money
-                            number this app shows anyone.
+  RazorpayClientFactory      Builds an authenticated razorpay.Client
+                             from apps.configuration's PaymentConfiguration.
+                             The one place a Client gets constructed.
+  PaymentEventService        Tiny helper — one line to append a
+                             PaymentEvent, mirroring
+                             apps.bookings.services.NotificationService.
+  PaymentCalculationService  The one source of truth for every money
+                             number this app shows anyone.
   PaymentOrderService        Order creation: ownership, project-state,
-                            phase, and duplicate-order checks, then
-                            the actual Razorpay API call.
+                             phase, and duplicate-order checks, then
+                             the actual Razorpay API call.
   PaymentVerificationService Server-side signature + Razorpay-API
-                            cross-check verification of a checkout
-                            result. Never trusts the frontend.
-  WebhookService              Signature verification + idempotency +
-                            event routing for the Razorpay webhook.
-  ReconciliationService       Compares internal state against
-                            Razorpay's own — logs mismatches, never
-                            silently overwrites history.
+                             cross-check verification of a checkout
+                             result. Never trusts the frontend.
+  WebhookService             Signature verification + idempotency +
+                             event routing for the Razorpay webhook.
+  ReconciliationService      Compares internal vs. Razorpay state —
+                             logs mismatches, never silently
+                             overwrites history.
+
+A note on locking, since it's easy to get subtly wrong here (this
+audit found and fixed two real races that an earlier version of this
+file had): every operation that decides "is this the thing that gets
+to happen" — claiming a Payment for order creation, writing a
+verified/failed outcome — re-fetches under select_for_update()
+*immediately before* making that decision and writing it, rather than
+trusting an unlocked read taken earlier in the same function. Where a
+slow network call (the Razorpay API) sits between an earlier read and
+a later write, the lock is deliberately NOT held across that call
+(that would serialize unrelated requests for no reason) — instead the
+claim is committed *before* the network call, and the actual state
+change happens in a fresh, separately-locked block *after* it.
 """
 
 from __future__ import annotations
@@ -52,15 +66,15 @@ from .models import (
     ProjectPriceSnapshot,
     WebhookEvent,
 )
-from .money import round_money, split_advance_and_final, to_paise
+from .money import from_paise, round_money, split_advance_and_final, to_paise
 
 logger = logging.getLogger(__name__)
 
 # Fixed allow-list of Razorpay payment-entity fields safe to persist —
 # never the full API response. None of these are payment instrument
-# secrets: method/bank/wallet/vpa/card_id are identifiers Razorpay
-# itself considers safe to return to a merchant server, not card
-# numbers or PINs.
+# secrets: method/bank/wallet/card_id are identifiers Razorpay itself
+# considers safe to return to a merchant server, not card numbers or
+# PINs.
 _SAFE_PAYMENT_FIELDS = ("method", "bank", "wallet", "vpa", "card_id", "email", "contact")
 
 
@@ -134,9 +148,9 @@ class PaymentCalculationService:
     def get_project_summary(booking) -> dict:
         """Everything a frontend needs to render a payment summary —
         computed fresh on every call, never cached, and the frontend
-        never recomputes any of these numbers itself (see the Part 6
-        spec's explicit 'do not calculate the authoritative amount on
-        the frontend')."""
+        never recomputes any of these numbers itself (see the spec's
+        explicit 'do not calculate the authoritative amount on the
+        frontend')."""
         try:
             snapshot = booking.price_snapshot
         except ProjectPriceSnapshot.DoesNotExist:
@@ -226,15 +240,28 @@ class PaymentOrderService:
         )
         amount = advance_amount if phase == Payment.Phase.ADVANCE_PAYMENT else final_amount
 
-        # Lock held only for this short, no-network section — reserve/
-        # check the Payment row's state, then release before the slow
-        # Razorpay API call below. Holding a DB row lock for the
-        # duration of an external HTTP call would serialize every
-        # concurrent request through that one call's latency for no
-        # benefit; the lock only needs to protect the "is a duplicate
-        # order about to be created" decision itself, the same
-        # decision accept_project's lock protects in
-        # apps.bookings.services.
+        # Claim this Payment for order creation — committed as its own
+        # short transaction, *before* the slow Razorpay API call below.
+        #
+        # An earlier version of this method held the lock only for
+        # this get-or-create-and-check step, released it, *then* made
+        # the Razorpay call — on the theory that holding a DB lock for
+        # the duration of a network call serializes concurrent
+        # requests for no benefit. That's true in general, but it left
+        # a real gap here: between releasing the lock and the order
+        # actually existing, a second near-simultaneous request would
+        # find no PaymentOrder yet (nothing to return as "already
+        # active") and would fall through to calling Razorpay's API
+        # itself — two live orders for one Payment. This audit caught
+        # it; the original test suite only exercised the sequential
+        # retry case, not genuine concurrency, so it never saw it.
+        #
+        # The fix: mark the claim (status -> ORDER_CREATED) *inside*
+        # this same short, committed transaction, before the network
+        # call. A concurrent second request blocks on the row lock,
+        # then sees the claim once it proceeds — with no PaymentOrder
+        # to return yet, it's told to retry shortly rather than
+        # silently duplicating.
         with transaction.atomic():
             payment, created = Payment.objects.select_for_update().get_or_create(
                 booking=booking,
@@ -255,7 +282,19 @@ class PaymentOrderService:
                 active_order = payment.orders.filter(status__in=PaymentOrder.ACTIVE_STATUSES).order_by("-created_at").first()
                 if active_order:
                     return active_order
+                # Claimed (status says order-creation is underway or
+                # done) but no PaymentOrder row exists yet — exactly
+                # the race window this lock exists to close. Don't
+                # fall through and create a second order; ask the
+                # caller to retry rather than silently duplicating.
+                raise ValidationError(
+                    "A payment order is already being created for this booking. Please wait a moment and try again."
+                )
+
+            if payment.status != Payment.Status.ORDER_CREATED:
+                _transition(payment, Payment.Status.ORDER_CREATED)
             payment_id = payment.id
+            payment_currency = payment.currency
 
         client = RazorpayClientFactory.get_client()
         amount_paise = to_paise(amount)
@@ -272,7 +311,7 @@ class PaymentOrderService:
             razorpay_order = client.order.create(
                 data={
                     "amount": amount_paise,
-                    "currency": payment.currency,
+                    "currency": payment_currency,
                     "receipt": receipt,
                     "notes": {
                         "booking_id": str(booking.id),
@@ -282,15 +321,21 @@ class PaymentOrderService:
                 }
             )
         except (razorpay.errors.BadRequestError, razorpay.errors.ServerError, razorpay.errors.GatewayError) as exc:
-            # Deliberately NOT inside the atomic block above (it has
-            # already exited by this point) — this log entry must
-            # survive even though create_order is about to raise. A
-            # single PaymentEventService.log() call is one INSERT,
-            # already atomic on its own; no explicit wrapper needed.
-            PaymentEventService.log(
-                payment=payment, event_type=PaymentEvent.EventType.FAILED, actor=customer,
-                description=f"Razorpay order creation failed: {exc}",
-            )
+            # Revert the claim so a retry sees a retryable status
+            # instead of being permanently told "already being
+            # created" for an order that will now never exist. Its own
+            # transaction, deliberately not nested inside anything
+            # that later raises — this write must survive.
+            with transaction.atomic():
+                payment = Payment.objects.select_for_update().get(pk=payment_id)
+                if lifecycle.is_valid_transition(payment.status, Payment.Status.FAILED):
+                    payment.status = Payment.Status.FAILED
+                    payment.failure_reason = f"Razorpay order creation failed: {exc}"
+                    payment.save(update_fields=["status", "failure_reason", "updated_at"])
+                PaymentEventService.log(
+                    payment=payment, event_type=PaymentEvent.EventType.FAILED, actor=customer,
+                    description=f"Razorpay order creation failed: {exc}",
+                )
             raise ValidationError("Could not create a payment order right now. Please try again.")
 
         with transaction.atomic():
@@ -300,12 +345,10 @@ class PaymentOrderService:
                 razorpay_order_id=razorpay_order["id"],
                 amount=amount,
                 amount_paise=amount_paise,
-                currency=payment.currency,
+                currency=payment_currency,
                 receipt=receipt,
                 status=PaymentOrder.Status.CREATED,
             )
-            if payment.status != Payment.Status.ORDER_CREATED:
-                _transition(payment, Payment.Status.ORDER_CREATED)
             PaymentEventService.log(
                 payment=payment, event_type=PaymentEvent.EventType.ORDER_CREATED, actor=customer,
                 description=f"Razorpay order created for {payment.get_phase_display()}.",
@@ -325,14 +368,16 @@ class PaymentVerificationService:
     def verify_payment(
         payment_order_id, *, razorpay_order_id: str, razorpay_payment_id: str, razorpay_signature: str, customer
     ) -> Payment:
-        # No select_for_update()/outer atomic here — unlike
-        # accept_project's race (two developers, one booking, a real
-        # correctness invariant to protect), a duplicate verify call
-        # for the same razorpay_payment_id is already safe without a
-        # lock: PaymentTransaction.update_or_create is keyed on that
-        # column's own unique constraint, so two near-simultaneous
-        # calls just update the same row twice — idempotent, not a
-        # race that needs serializing.
+        # The read here is unlocked — everything up to and including
+        # the Razorpay API cross-check (client.payment.fetch, a
+        # network call) is pure validation with no state mutation, so
+        # there's nothing to protect yet. The final state-mutating
+        # block below re-fetches under select_for_update() before
+        # writing anything — see that block's comment for why (this
+        # audit found the original "no lock needed, it's all
+        # idempotent" reasoning here was weaker than it looked once
+        # this path has to provably converge with the webhook handler,
+        # not just "probably" converge).
         try:
             payment_order = PaymentOrder.objects.select_related("payment", "payment__booking").get(pk=payment_order_id)
         except PaymentOrder.DoesNotExist:
@@ -349,21 +394,37 @@ class PaymentVerificationService:
             metadata={"razorpay_order_id": razorpay_order_id, "razorpay_payment_id": razorpay_payment_id},
         )
 
-        def fail(reason: str) -> None:
+        def move_to(new_status: str, reason: str, event_type: str) -> None:
             # Its own small transaction, deliberately not nested
             # inside anything this function later raises out of —
-            # see the module-level note on _transition. A
-            # verification failure must be recorded, and this is what
-            # makes that record survive the ValidationError raised
-            # right after every call site below.
+            # see the module-level note on _transition. This record
+            # must survive the ValidationError raised right after
+            # every call site below.
+            #
+            # Re-fetches under select_for_update() rather than reusing
+            # the unlocked `payment` read at the top of the enclosing
+            # function — a stale in-memory status here is worse than
+            # just "redundant work": if the webhook already legitimately
+            # captured this payment while this call's outer,
+            # unlocked read still shows an earlier status, checking
+            # is_valid_transition against that stale value would (since
+            # most non-terminal statuses *do* have a valid edge onward)
+            # incorrectly move an already-resolved payment. Re-fetching
+            # locked closes that.
             with transaction.atomic():
-                if lifecycle.is_valid_transition(payment.status, Payment.Status.VERIFICATION_FAILED):
-                    payment.status = Payment.Status.VERIFICATION_FAILED
-                    payment.failure_reason = reason
-                    payment.save(update_fields=["status", "failure_reason", "updated_at"])
-                PaymentEventService.log(
-                    payment=payment, event_type=PaymentEvent.EventType.VERIFICATION_FAILED, actor=customer, description=reason
-                )
+                locked_order = PaymentOrder.objects.select_for_update().select_related("payment").get(pk=payment_order.id)
+                locked_payment = locked_order.payment
+                if lifecycle.is_valid_transition(locked_payment.status, new_status):
+                    locked_payment.status = new_status
+                    update_fields = ["status", "updated_at"]
+                    if new_status == Payment.Status.VERIFICATION_FAILED:
+                        locked_payment.failure_reason = reason
+                        update_fields.append("failure_reason")
+                    locked_payment.save(update_fields=update_fields)
+                PaymentEventService.log(payment=locked_payment, event_type=event_type, actor=customer, description=reason)
+
+        def fail(reason: str) -> None:
+            move_to(Payment.Status.VERIFICATION_FAILED, reason, PaymentEvent.EventType.VERIFICATION_FAILED)
 
         # Wrong-order check: the order_id the client is asserting must
         # be the one we actually created for this PaymentOrder row —
@@ -412,17 +473,40 @@ class PaymentVerificationService:
             raise ValidationError("The payment currency does not match what was expected.")
 
         razorpay_status = razorpay_payment.get("status")
+        if razorpay_status == "created":
+            # Razorpay's own term for "initiated but not yet
+            # authorized" — genuinely still pending, not a failure.
+            # Unusual to see here in practice (verify_payment is only
+            # ever called after Razorpay Checkout's own success
+            # callback fires, which normally implies at least
+            # "authorized"), but the spec is explicit that pending
+            # payments must be supported and never misreported as
+            # failed.
+            move_to(
+                Payment.Status.PENDING, "Payment is still pending on Razorpay's side.",
+                PaymentEvent.EventType.VERIFICATION_ATTEMPTED,
+            )
+            raise ValidationError("This payment is still processing. Please check back in a moment.")
         if razorpay_status not in ("authorized", "captured"):
             fail(f"Unexpected Razorpay payment status: {razorpay_status!r}.")
             raise ValidationError("This payment has not completed successfully.")
 
         # Every check passed — this sequence genuinely is
         # all-or-nothing, so (unlike the checks above) it does belong
-        # in one atomic block.
+        # in one atomic block. Re-fetches payment_order (and, via the
+        # join, payment) under select_for_update() here rather than
+        # reusing the unlocked copies read at the top of this
+        # function — this is what makes this path and the webhook
+        # handler's _handle_payment_event (which locks the same way)
+        # provably converge instead of racing on whichever one reads
+        # a stale in-memory status first.
         is_captured = razorpay_status == "captured"
         safe_fields = {k: razorpay_payment.get(k) for k in _SAFE_PAYMENT_FIELDS}
 
         with transaction.atomic():
+            payment_order = PaymentOrder.objects.select_for_update().select_related("payment").get(pk=payment_order.id)
+            payment = payment_order.payment
+
             PaymentTransaction.objects.update_or_create(
                 razorpay_payment_id=razorpay_payment_id,
                 defaults={
@@ -435,6 +519,18 @@ class PaymentVerificationService:
                     "raw_response": safe_fields,
                 },
             )
+
+            if payment.status == Payment.Status.CAPTURED:
+                # Already captured — most likely the webhook won this
+                # race and landed first. Nothing left to do; the
+                # PaymentTransaction upsert above is still correct and
+                # idempotent either way.
+                PaymentEventService.log(
+                    payment=payment, event_type=PaymentEvent.EventType.VERIFIED, actor=customer,
+                    description="Payment was already captured (webhook likely arrived first).",
+                    metadata={"razorpay_payment_id": razorpay_payment_id},
+                )
+                return payment
 
             payment_order.status = PaymentOrder.Status.PAID if is_captured else PaymentOrder.Status.ATTEMPTED
             payment_order.save(update_fields=["status", "updated_at"])
@@ -565,7 +661,7 @@ class WebhookService:
         # active transaction (Django raises otherwise), and everything
         # in this function is "the effects of processing one webhook
         # event," which genuinely belongs together: either they all
-        # land, or (or a real, unexpected DB error) none do, and
+        # land, or (on a real, unexpected DB error) none do, and
         # process_webhook's caller records that failure via the
         # WebhookEvent row's error_message rather than silently
         # losing track of it.
@@ -691,7 +787,7 @@ class WebhookService:
         # Refund row recorded as PROCESSED while Payment.status still
         # says CAPTURED.
         with transaction.atomic():
-            amount = round_money(Decimal(refund_entity.get("amount", 0)) / 100)
+            amount = from_paise(refund_entity.get("amount", 0))
             status = Refund.Status.PROCESSED if event_type == "refund.processed" else Refund.Status.INITIATED
             Refund.objects.update_or_create(
                 razorpay_refund_id=razorpay_refund_id,

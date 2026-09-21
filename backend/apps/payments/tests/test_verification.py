@@ -1,3 +1,4 @@
+# File Path: backend/apps/payments/tests/test_verification.py
 """
 PaymentVerificationService tests — the security-critical path. Real,
 unmocked signature crypto is covered in test_signature_verification.py;
@@ -81,6 +82,23 @@ class PaymentVerificationTests(PaymentFixtureMixin, TestCase):
             )
         self.assertEqual(payment.status, Payment.Status.AUTHORIZED)
         self.assertIsNone(payment.captured_at)
+
+    def test_created_status_is_pending_not_failed(self):
+        """Razorpay's own term for 'initiated but not yet authorized'
+        is genuinely still pending — must not be reported as a
+        verification failure. Found and fixed during a Part 6
+        follow-up audit."""
+        order = self._make_order()
+        client = self._mock_client(payment_entity=_razorpay_payment_entity(status="created"))
+        with patch("apps.payments.services.RazorpayClientFactory.get_client", return_value=client):
+            with self.assertRaises(ValidationError):
+                PaymentVerificationService.verify_payment(
+                    order.id, razorpay_order_id="order_MOCKED123", razorpay_payment_id="pay_MOCKED456",
+                    razorpay_signature="sig", customer=self.customer,
+                )
+        order.payment.refresh_from_db()
+        self.assertEqual(order.payment.status, Payment.Status.PENDING)
+        self.assertNotEqual(order.payment.status, Payment.Status.VERIFICATION_FAILED)
 
     def test_invalid_signature_is_rejected_and_not_captured(self):
         order = self._make_order()
